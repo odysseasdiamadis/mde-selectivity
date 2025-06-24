@@ -1,3 +1,7 @@
+Things that need documentation:
+- Downloading and moving the train/val ds folder
+- 
+
 # METER: a mobile vision transformer architecture for monocular depth estimation
 
 ![alt text](https://github.com/lorenzopapa5/METER/blob/main/images/meter.jpg)

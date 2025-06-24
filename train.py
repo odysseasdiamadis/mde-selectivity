@@ -1,3 +1,5 @@
+import sys
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -6,10 +8,13 @@ import yaml
 import os
 import logging
 from tqdm import tqdm
-import numpy as np
+from torchvision.transforms import v2 as t
 
-from architecture import MobileViT_S, MobileViT_XS, MobileViT_XXS
-from loss import TotalVariationLoss
+from architecture import build_METER_model
+from augmentation import CShift, DShift, augmentation2D
+from data import KittyDataset
+from loss import balanced_loss_function
+
 
 
 def load_config(config_path):
@@ -32,21 +37,6 @@ def setup_logging(log_dir):
     )
 
 
-def get_model(config):
-    """Get model based on configuration."""
-    variant = config['model']['variant']
-    models = {
-        'xxs': MobileViT_XXS,
-        'xs': MobileViT_XS,
-        's': MobileViT_S
-    }
-    
-    if variant not in models:
-        raise ValueError(f"Unknown model variant: {variant}")
-    
-    return models[variant]()
-
-
 def get_optimizer(model, config):
     """Get optimizer based on configuration."""
     optimizer_name = config['optimizer']
@@ -64,38 +54,6 @@ def get_optimizer(model, config):
         raise ValueError(f"Unknown optimizer: {optimizer_name}")
 
 
-def get_scheduler(optimizer, config):
-    """Get learning rate scheduler based on configuration."""
-    scheduler_name = config['scheduler']
-    
-    if scheduler_name == "StepLR":
-        step_size = config['step_size']
-        gamma = config['gamma']
-        return optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
-    elif scheduler_name == "ReduceLROnPlateau":
-        return optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10)
-    elif scheduler_name == "CosineAnnealingLR":
-        T_max = config['training']['num_epochs']
-        return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
-    else:
-        raise ValueError(f"Unknown scheduler: {scheduler_name}")
-
-
-def get_loss_function(config):
-    """Get loss function based on configuration."""
-    loss_name = config['loss']
-    
-    if loss_name == "MSELoss":
-        return nn.MSELoss()
-    elif loss_name == "L1Loss":
-        return nn.L1Loss()
-    elif loss_name == "SmoothL1Loss":
-        return nn.SmoothL1Loss()
-    elif loss_name == "TotalVariationLoss":
-        return TotalVariationLoss()
-    else:
-        raise ValueError(f"Unknown loss function: {loss_name}")
-
 
 def save_checkpoint(model, optimizer, scheduler, epoch, loss, checkpoint_dir, is_best=False):
     """Save model checkpoint."""
@@ -110,7 +68,7 @@ def save_checkpoint(model, optimizer, scheduler, epoch, loss, checkpoint_dir, is
     }
     
     # Save regular checkpoint
-    checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch}.pth')
+    checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch:03d}.pth')
     torch.save(checkpoint, checkpoint_path)
     
     # Save best model
@@ -134,9 +92,12 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path):
 def train_epoch(model, dataloader, criterion, optimizer, device, config):
     """Train for one epoch."""
     model.train()
-    total_loss = 0.0
+    total_loss = torch.tensor([0.0], device=device)
     num_batches = len(dataloader)
-    
+    log_step = config["training"].get("log_step_loss")
+
+    step_losses = []
+
     progress_bar = tqdm(dataloader, desc="Training")
     
     for batch_idx, (images, targets) in enumerate(progress_bar):
@@ -147,7 +108,17 @@ def train_epoch(model, dataloader, criterion, optimizer, device, config):
         
         outputs = model(images)
         loss = criterion(outputs, targets)
+
+        if log_step:
+            step_losses.append({
+                "depth": loss[0].item(),
+                "grad": loss[1].item(),
+                "normal": loss[2].item(),
+                "ssim": loss[3].item(),
+            })
         
+        loss = torch.stack(loss, dim=0).sum()
+
         loss.backward()
         optimizer.step()
         
@@ -157,16 +128,16 @@ def train_epoch(model, dataloader, criterion, optimizer, device, config):
         progress_bar.set_postfix({'Loss': f'{loss.item():.4f}'})
         
         # Log batch loss
-        if batch_idx % config['logging']['log_interval'] == 0:
+        if config['logging']['log_interval'] > 0 and batch_idx % config['logging']['log_interval'] == 0:
             logging.info(f'Batch {batch_idx}/{num_batches}, Loss: {loss.item():.4f}')
     
-    return total_loss / num_batches
+    return total_loss / num_batches, step_losses
 
 
 def validate_epoch(model, dataloader, criterion, device):
     """Validate for one epoch."""
     model.eval()
-    total_loss = 0.0
+    total_loss = torch.tensor(0.0)
     num_batches = len(dataloader)
     
     with torch.no_grad():
@@ -178,14 +149,15 @@ def validate_epoch(model, dataloader, criterion, device):
             
             outputs = model(images)
             loss = criterion(outputs, targets)
-            
+            loss = torch.stack(loss, dim=0).sum()
+
             total_loss += loss.item()
             progress_bar.set_postfix({'Loss': f'{loss.item():.4f}'})
     
     return total_loss / num_batches
 
 
-def train(config):
+def train(config) -> None:
     """Main training function."""
     # Setup logging
     setup_logging(config['logging']['log_dir'])
@@ -201,55 +173,62 @@ def train(config):
         logging.info("Using CPU")
     
     # Get model
-    model = get_model(config)
+    model = build_METER_model(device, arch_type=config['model']['variant'])
     model = model.to(device)
     logging.info(f"Model: {config['model']['variant']} variant")
     
     # Get optimizer and scheduler
-    optimizer = get_optimizer(model, config)
-    scheduler = get_scheduler(optimizer, config)
+    optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
     
     # Get loss function
-    criterion = get_loss_function(config)
-    
-    # TODO: Initialize dataloaders - this requires implementing dataset classes
-    # For now, we'll create dummy dataloaders as placeholders
-    logging.warning("Using dummy dataloaders - implement actual dataset loading")
-    
+    criterion = balanced_loss_function(device)
+        
     # Placeholder for actual dataloaders
-    train_loader = None
-    val_loader = None
-    
-    if train_loader is None or val_loader is None:
-        logging.error("Dataloaders not implemented. Please implement dataset loading.")
-        return
+    dataset = KittyDataset(
+        root_raw=config['data']['root_raw'],
+        root_annotated=config['data']['root_annotated'],
+        split_files_folder=config['data']['split_files_folder'],
+        train=True,
+        transforms=t.Compose([
+            t.ToImage(),
+            t.ToDtype(torch.float32, scale=False),  # scale to [0, 1]
+            t.RandomHorizontalFlip(p=0.5),
+            t.RandomVerticalFlip(p=0.5),
+            CShift(),
+            DShift()
+            ])
+    )
+
+    pin_memory = (device == "cuda")
+    train_ds, val_ds = torch.utils.data.random_split(dataset, config['data']["train_val_split"])
+    train_loader = DataLoader(train_ds, batch_size=config['training']['batch_size'], num_workers=config['data']['num_workers'], pin_memory=pin_memory)
+    val_loader = DataLoader(val_ds, batch_size=config['training']['batch_size'], num_workers=config['data']['num_workers'])
     
     # Training loop
     best_val_loss = float('inf')
+    losses = []
     
     for epoch in range(config['training']['num_epochs']):
         logging.info(f"Epoch {epoch+1}/{config['training']['num_epochs']}")
         
         # Train
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, config)
+        train_loss, epoch_losses = train_epoch(model, train_loader, criterion, optimizer, device, config)
         
         # Validate
         val_loss = validate_epoch(model, val_loader, criterion, device)
         
         # Update scheduler
-        if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-            scheduler.step(val_loss)
-        else:
-            scheduler.step()
+        scheduler.step()
         
         # Log epoch results
         current_lr = optimizer.param_groups[0]['lr']
-        logging.info(f"Epoch {epoch+1} - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr:.6f}")
-        
+        logging.info(f"Epoch {epoch+1} - Train Loss: {train_loss.item():.4f}, Val Loss: {val_loss.item():.4f}, LR: {current_lr:.6f}")
+        losses = losses + epoch_losses
         # Save checkpoint
-        is_best = val_loss < best_val_loss
+        is_best: bool = val_loss.item() < best_val_loss
         if is_best:
-            best_val_loss = val_loss
+            best_val_loss: float = val_loss.item()
         
         if (epoch + 1) % config['logging']['save_interval'] == 0 or is_best:
             save_checkpoint(
@@ -259,11 +238,14 @@ def train(config):
     
     logging.info("Training completed!")
     logging.info(f"Best validation loss: {best_val_loss:.4f}")
+    pd.DataFrame(losses).to_csv(os.path.join(config['logging']['log_dir'], './epoch_losses.csv'))
+
 
 
 def main():
-    """Main function."""
     config_path = "config.yaml"
+    if len(sys.argv) > 1:
+        config_path = sys.argv[1]
     
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")

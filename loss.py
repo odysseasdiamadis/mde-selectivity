@@ -1,7 +1,6 @@
 import numpy as np
 import torch.nn as nn
 import torch
-import pytorch_ssim
 import torch.nn.functional as F
 from math import exp
 
@@ -56,15 +55,15 @@ def ssim(img1, img2, val_range, window_size=11, window=None, size_average=True, 
 
 
 class Sobel(nn.Module):
-    def __init__(self):
+    def __init__(self, device="cuda"):
         super(Sobel, self).__init__()
         self.edge_conv = nn.Conv2d(1, 2, kernel_size=3, stride=1, padding=1, bias=False)
         edge_kx = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
         edge_ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
         edge_k = np.stack((edge_kx, edge_ky))
 
-        edge_k = torch.from_numpy(edge_k).float().view(2, 1, 3, 3)
-        self.edge_conv.weight = nn.Parameter(edge_k)
+        edge_k = torch.from_numpy(edge_k).to(device=device).float().view(2, 1, 3, 3)
+        self.edge_conv.weight = nn.Parameter(edge_k).to(device=device)
 
         for param in self.parameters():
             param.requires_grad = False
@@ -84,8 +83,8 @@ class balanced_loss_function(nn.Module):
         self.get_gradient = Sobel().to(device)
         self.device = device
         self.lambda_1 = 0.5
-        self.lambda_2 = 100
-        self.lambda_3 = 100
+        self.lambda_2 = 10
+        self.lambda_3 = 10
 
     def forward(self, output, depth):
         with torch.no_grad():
@@ -107,8 +106,8 @@ class balanced_loss_function(nn.Module):
         loss_dy = torch.abs(output_grad_dy - depth_grad_dy).mean()
         loss_normal = self.lambda_2 * torch.abs(1 - self.cos(output_normal, depth_normal)).mean()
 
-        loss_ssim = (1 - ssim(output, depth, val_range=1000.0)) * self.lambda_3
+        loss_ssim = (1 - ssim(output, depth, val_range=1000.0)) * self.lambda_3 # type: ignore
 
-        loss_grad = (loss_dx + loss_dy) / self.lambda_1
+        loss_grad = (loss_dx + loss_dy) * self.lambda_1
 
-        return loss_depth, loss_ssim, loss_normal, loss_grad
+        return loss_depth, loss_grad, loss_normal, loss_ssim
