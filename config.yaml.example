@@ -1,0 +1,29 @@
+# Training configuration
+model:
+  name: "METER"
+  variant: "xxs"  # xxs, xs, s
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  num_epochs: 60
+  log_step_loss: True
+
+
+data:
+  root_raw: "/path/to/raw/images
+  root_annotated: /path/to/depth/images
+  split_files_folder: "./data_splits"
+  train_val_split: [0.9, 0.1]
+  num_workers: 10
+  shuffle: true
+
+device:
+  cuda: true
+  device_id: 0
+
+logging:
+  log_interval: 0 # steps -- 0 for no log
+  save_interval: 5 # epochs
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
