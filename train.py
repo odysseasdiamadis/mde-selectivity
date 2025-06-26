@@ -9,10 +9,11 @@ import os
 import logging
 from tqdm import tqdm
 from torchvision.transforms import v2 as t
+from torchvision import transforms
 
 from architecture import build_METER_model
 from augmentation import CShift, DShift, augmentation2D
-from data import KittyDataset
+from data import KittiDataset
 from loss import balanced_loss_function
 
 
@@ -183,16 +184,16 @@ def train(config) -> None:
     
     # Get loss function
     criterion = balanced_loss_function(device)
-        
+    
     # Placeholder for actual dataloaders
-    dataset = KittyDataset(
+    dataset = KittiDataset(
         root_raw=config['data']['root_raw'],
         root_annotated=config['data']['root_annotated'],
         split_files_folder=config['data']['split_files_folder'],
         train=True,
         transforms=t.Compose([
             t.ToImage(),
-            t.ToDtype(torch.float32, scale=False),  # scale to [0, 1]
+            t.ToDtype(torch.float32),  # scale to [0, 1]
             t.RandomHorizontalFlip(p=0.5),
             t.RandomVerticalFlip(p=0.5),
             CShift(),

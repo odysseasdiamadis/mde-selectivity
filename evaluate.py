@@ -9,11 +9,12 @@ import os
 import logging
 from tqdm import tqdm
 from torchvision.transforms import v2 as t
+from torchvision import transforms
 from torchvision.datasets import VisionDataset
 
 from architecture import build_METER_model
 from augmentation import CShift, DShift, augmentation2D
-from data import KittyDataset
+from data import KittiDataset
 from loss import balanced_loss_function
 from metrics import REL, RMSE, delta
 
@@ -82,7 +83,14 @@ def evaluate(model: nn.Module, dataloader, criterion, device):
 
     return metrics
 
-    
+class RescaleDepth(torch.nn.Module):
+    def __init__(self, scale: float = 80.0):
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, img, depth):
+        # img: Tensor, depth: Tensor
+        return img, depth * self.scale
 
 def main():
     config_path = "config.yaml"
@@ -103,19 +111,17 @@ def main():
     else:
         device = torch.device('cpu')
         logging.info("Using CPU")
-
-    dataset = KittyDataset(
+    
+    
+    # rescale_0_80 = transforms.Lambda(lambda (raw, depth): (raw, depth * 80))
+    dataset = KittiDataset(
         root_raw=config['data']['root_raw'],
         root_annotated=config['data']['root_annotated'],
         split_files_folder=config['data']['split_files_folder'],
-        train=True,
+        train=False,
         transforms=t.Compose([
             t.ToImage(),
             t.ToDtype(torch.float32, scale=True),  # scale to [0, 1]
-            t.RandomHorizontalFlip(p=0.5),
-            t.RandomVerticalFlip(p=0.5),
-            CShift(),
-            DShift()
             ])
     )
     dataloader = DataLoader(dataset, 128)
@@ -126,8 +132,9 @@ def main():
     load_checkpoint(model, checkpoint_path)
     metrics = evaluate(model, dataloader, criterion=balanced_loss_function(device), device=device)
     df = pd.DataFrame(metrics).mean()
-    df.to_csv("./metrics")
+    df.to_csv("./metrics.csv")
     print(df)
+
 
 if __name__ == "__main__":
     main()
