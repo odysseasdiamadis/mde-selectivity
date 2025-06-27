@@ -11,7 +11,7 @@ from torchvision.transforms import v2 as t
 import csv
 
 from architecture import build_METER_model
-from data import KittyDataset
+from data import KittiDataset
 from loss import balanced_loss_function
 from torch.profiler import profile, record_function, ProfilerActivity
 from torch.profiler import tensorboard_trace_handler
@@ -86,7 +86,7 @@ def train(config) -> None:
     criterion = balanced_loss_function(device)
         
     # Placeholder for actual dataloaders
-    dataset = KittyDataset(
+    dataset = KittiDataset(
         root_raw=config['data']['root_raw'],
         root_annotated=config['data']['root_annotated'],
         split_files_folder=config['data']['split_files_folder'],

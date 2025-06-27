@@ -11,9 +11,7 @@ training:
 
 
 data:
-  root_raw: "/path/to/raw/images
-  root_annotated: /path/to/depth/images
-  split_files_folder: "./data_splits"
+  root: "/path/to/raw/images
   train_val_split: [0.9, 0.1]
   num_workers: 10
   shuffle: true
