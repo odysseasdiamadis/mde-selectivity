@@ -1,8 +1,5 @@
 import os
 from typing import Callable, Optional
-import h5py
-import numpy as np
-import torch
 from PIL import Image
 from torchvision.datasets import VisionDataset
 from torchvision.transforms import v2 as t
@@ -10,27 +7,43 @@ from torchvision.transforms import v2 as t
 from augmentation import augmentation2D
 
 class NYUDataset(VisionDataset):
-    def __init__(self, root, transforms: Optional[Callable] = None):
-        super().__init__(None, transforms)
-        with h5py.File(mat_file, 'r') as f:
-            images = f['images']
-            assert isinstance(images, h5py.Dataset)
-            self.images = images
-            depths = f['depths']
-            assert isinstance(depths, h5py.Dataset)
-            self.depths = depths
-            assert type(self.images) == h5py.Dataset
-            assert type(self.depths) == h5py.Dataset
+    def __init__(self, root, transforms: Optional[Callable] = None, test=False):
+        super().__init__(root, transforms)
+        
+        self.resize_rgb = t.Resize((192,256))
+        self.resize_depth = t.Resize((48,64))
+        if test:
+            csv_path = os.path.join(root, 'nyu2_test.csv')
+        else:
+            csv_path = os.path.join(root, 'nyu2_train.csv')
+        print(root)
 
-            assert self.images.shape[0] == self.depths.shape[0]
+        self.samples = []
+
+        with open(csv_path) as f:
+            for line in f:
+                rgb, depth = tuple(line.strip().split(','))
+                rgb_fixed = os.path.sep.join(rgb.split(os.path.sep)[1:])
+                depth_fixed = os.path.sep.join(depth.split(os.path.sep)[1:])
+
+                self.samples.append((os.path.join(root, rgb_fixed), os.path.join(root, depth_fixed)))
+        
+        for sample in self.samples:
+            assert os.path.isfile(sample[0]), f"{sample[0]} does not exist"
+            assert os.path.isfile(sample[1]), f"{sample[1]} does not exist"
+
 
     def __len__(self):
-        return self.images.shape[0]
+        return len(self.samples)
     
     def __getitem__(self, idx):
-        return (
-            torch.tensor(self.images[idx]),
-            torch.tensor(self.depths[idx])
-        )
+        rgb_path, depth_path = self.samples[idx]
+        rgb = Image.open(rgb_path)
+        depth = Image.open(depth_path)
 
-    
+        if self.transforms:
+            rgb, depth = self.transforms(rgb, depth)
+        
+        rgb = self.resize_rgb(rgb)
+        depth = self.resize_depth(depth)
+        return rgb, depth

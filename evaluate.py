@@ -14,7 +14,7 @@ from torchvision.datasets import VisionDataset
 
 from architecture import build_METER_model
 from augmentation import CShift, DShift, augmentation2D
-from data import KittiDataset
+from data import NYUDataset
 from loss import balanced_loss_function
 from metrics import REL, RMSE, delta
 
@@ -114,11 +114,9 @@ def main():
     
     
     # rescale_0_80 = transforms.Lambda(lambda (raw, depth): (raw, depth * 80))
-    dataset = KittiDataset(
-        root_raw=config['data']['root_raw'],
-        root_annotated=config['data']['root_annotated'],
-        split_files_folder=config['data']['split_files_folder'],
-        train=False,
+    dataset = NYUDataset(
+        root=config['data']['root'],
+        test=True,
         transforms=t.Compose([
             t.ToImage(),
             t.ToDtype(torch.float32, scale=True),  # scale to [0, 1]

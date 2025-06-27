@@ -13,7 +13,7 @@ from torchvision import transforms
 
 from architecture import build_METER_model
 from augmentation import CShift, DShift, augmentation2D
-from data import KittiDataset
+from data import NYUDataset
 from loss import balanced_loss_function
 
 
@@ -158,8 +158,8 @@ def validate_epoch(model, dataloader, criterion, device):
     return total_loss / num_batches
 
 
-def train(config) -> None:
-    """Main training function."""
+def train(config, ckpt_path=None) -> None:
+    dtype = torch.bfloat16
     # Setup logging
     setup_logging(config['logging']['log_dir'])
     logging.info("Starting training...")
@@ -175,25 +175,28 @@ def train(config) -> None:
     
     # Get model
     model = build_METER_model(device, arch_type=config['model']['variant'])
-    model = model.to(device)
-    logging.info(f"Model: {config['model']['variant']} variant")
-    
-    # Get optimizer and scheduler
+
+
     optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
+    saved_epoch, saved_loss = 0, 0
+
+    if ckpt_path:
+        saved_epoch, saved_loss = load_checkpoint(model=model, optimizer=optimizer, scheduler=scheduler, checkpoint_path=ckpt_path)
     
     # Get loss function
-    criterion = balanced_loss_function(device)
+    criterion = balanced_loss_function(device, dtype=dtype)
+    
+    model = model.to(device=device, dtype=dtype)
+    criterion = criterion.to(device="cuda", dtype=dtype)
     
     # Placeholder for actual dataloaders
-    dataset = KittiDataset(
-        root_raw=config['data']['root_raw'],
-        root_annotated=config['data']['root_annotated'],
-        split_files_folder=config['data']['split_files_folder'],
-        train=True,
+    dataset = NYUDataset(
+        root=config['data']['root'],
+        test=False,
         transforms=t.Compose([
             t.ToImage(),
-            t.ToDtype(torch.float32),  # scale to [0, 1]
+            t.ToDtype(dtype, scale=True),  # scale to [0, 1]
             t.RandomHorizontalFlip(p=0.5),
             t.RandomVerticalFlip(p=0.5),
             CShift(),
@@ -210,7 +213,7 @@ def train(config) -> None:
     best_val_loss = float('inf')
     losses = []
     
-    for epoch in range(config['training']['num_epochs']):
+    for epoch in range(saved_epoch,config['training']['num_epochs']):
         logging.info(f"Epoch {epoch+1}/{config['training']['num_epochs']}")
         
         # Train
@@ -245,14 +248,17 @@ def train(config) -> None:
 
 def main():
     config_path = "config.yaml"
+    ckpt_path = None
     if len(sys.argv) > 1:
         config_path = sys.argv[1]
+    if len(sys.argv) > 2:
+        ckpt_path = sys.argv[2]
     
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     
     config = load_config(config_path)
-    train(config)
+    train(config, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":
