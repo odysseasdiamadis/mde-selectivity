@@ -1,17 +1,45 @@
 import os
 from typing import Callable, Optional
 from PIL import Image
+import numpy as np
+import torch
 from torchvision.datasets import VisionDataset
 from torchvision.transforms import v2 as t
 
-from augmentation import augmentation2D
+from augmentation import augmentation2D, custom_tensor_augmentation
+
+
+class RescaleDepth(t.Transform):
+    def __init__(self, scale):
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, *img):
+        rgb, depth = img
+        return rgb, depth * self.scale
+
+
 
 class NYUDataset(VisionDataset):
-    def __init__(self, root, transforms: Optional[Callable] = None, test=False):
+    def __init__(self,
+                 root,
+                 transforms: Optional[Callable] = None,
+                 test=False,
+                 dtype=torch.float32
+                ):
         super().__init__(root, transforms)
-        
-        self.resize_rgb = t.Resize((192,256))
-        self.resize_depth = t.Resize((48,64))
+        self.dtype = dtype
+        self.rgb_transform = t.Compose([
+            t.Resize((192,256)),
+            t.ToImage(),
+            t.ToDtype(dtype, scale=False)
+        ])
+        self.depth_transform = t.Compose([
+            t.Resize((48,64)),
+            t.ToImage(),
+            t.ToDtype(dtype)
+        ])
+        self.test = test
         if test:
             csv_path = os.path.join(root, 'nyu2_test.csv')
         else:
@@ -41,9 +69,11 @@ class NYUDataset(VisionDataset):
         rgb = Image.open(rgb_path)
         depth = Image.open(depth_path)
 
-        if self.transforms:
-            rgb, depth = self.transforms(rgb, depth)
+        rgb = self.rgb_transform(rgb)
+        depth = self.depth_transform(depth)
+
+        if not self.test:
+            rgb, depth = custom_tensor_augmentation(rgb, depth, dtype=self.dtype)
         
-        rgb = self.resize_rgb(rgb)
-        depth = self.resize_depth(depth)
+        depth = depth/10.0 # cm to respect the augmentation
         return rgb, depth

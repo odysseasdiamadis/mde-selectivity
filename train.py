@@ -1,7 +1,6 @@
 import sys
 import pandas as pd
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import yaml
@@ -9,13 +8,12 @@ import os
 import logging
 from tqdm import tqdm
 from torchvision.transforms import v2 as t
-from torchvision import transforms
 
 from architecture import build_METER_model
-from augmentation import CShift, DShift, augmentation2D
-from data import NYUDataset
+from data import NYUDataset, RescaleDepth
 from loss import balanced_loss_function
 
+torch.manual_seed(42)
 
 
 def load_config(config_path):
@@ -36,24 +34,6 @@ def setup_logging(log_dir):
             logging.StreamHandler()
         ]
     )
-
-
-def get_optimizer(model, config):
-    """Get optimizer based on configuration."""
-    optimizer_name = config['optimizer']
-    lr = config['training']['learning_rate']
-    weight_decay = config['training']['weight_decay']
-    
-    if optimizer_name == "Adam":
-        return optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    elif optimizer_name == "SGD":
-        momentum = config['training'].get('momentum', 0.9)
-        return optim.SGD(model.parameters(), lr=lr, weight_decay=weight_decay, momentum=momentum)
-    elif optimizer_name == "AdamW":
-        return optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    else:
-        raise ValueError(f"Unknown optimizer: {optimizer_name}")
-
 
 
 def save_checkpoint(model, optimizer, scheduler, epoch, loss, checkpoint_dir, is_best=False):
@@ -159,7 +139,7 @@ def validate_epoch(model, dataloader, criterion, device):
 
 
 def train(config, ckpt_path=None) -> None:
-    dtype = torch.bfloat16
+    dtype = torch.float32
     # Setup logging
     setup_logging(config['logging']['log_dir'])
     logging.info("Starting training...")
@@ -178,30 +158,18 @@ def train(config, ckpt_path=None) -> None:
 
 
     optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30)
+    criterion = balanced_loss_function(device, dtype=dtype)
+    model = model.to(device=device, dtype=dtype)
+    criterion = criterion.to(device="cuda", dtype=dtype)
     saved_epoch, saved_loss = 0, 0
 
     if ckpt_path:
         saved_epoch, saved_loss = load_checkpoint(model=model, optimizer=optimizer, scheduler=scheduler, checkpoint_path=ckpt_path)
-    
-    # Get loss function
-    criterion = balanced_loss_function(device, dtype=dtype)
-    
-    model = model.to(device=device, dtype=dtype)
-    criterion = criterion.to(device="cuda", dtype=dtype)
-    
-    # Placeholder for actual dataloaders
+        
     dataset = NYUDataset(
         root=config['data']['root'],
         test=False,
-        transforms=t.Compose([
-            t.ToImage(),
-            t.ToDtype(dtype, scale=True),  # scale to [0, 1]
-            t.RandomHorizontalFlip(p=0.5),
-            t.RandomVerticalFlip(p=0.5),
-            CShift(),
-            DShift()
-            ])
     )
 
     pin_memory = (device == "cuda")

@@ -85,8 +85,8 @@ class balanced_loss_function(nn.Module):
         self.device = device
         self.dtype = dtype
         self.lambda_1 = 0.5
-        self.lambda_2 = 1
-        self.lambda_3 = 1
+        self.lambda_2 = 100
+        self.lambda_3 = 100
 
     def forward(self, output, depth):
         with torch.no_grad():

@@ -1,26 +1,24 @@
 from torch import Tensor
 import torch
 
+
+MAX = 1000.0
 _eps = 1e-4
 
 def RMSE(pred: Tensor, target: Tensor) -> Tensor:
-    pred   = pred[..., 23:189, 22:615]
-    target = target[..., 23:189, 22:615]
-    diff2  = (pred - target)**2
-    mse    = diff2.mean(dim=(1,2))
-    return torch.mean(torch.sqrt(mse))
+    mask = (target > 0) & (target < MAX)
+    diff2  = (pred[mask] - target[mask])**2
+    mse    = diff2.view(pred.shape).mean(dim=(-1, -2))
+    return torch.sqrt(input=mse).mean()
 
-def REL(pred: Tensor, target: Tensor, eps: float = _eps) -> Tensor:
-    pred   = pred[..., 23:189, 22:615]
-    target = target[..., 23:189, 22:615]
-    valid  = target > eps
-    rel_map = torch.abs(pred[valid] - target[valid]) / (target[valid] + eps)
-    return rel_map.mean()
+def REL(pred: Tensor, target: Tensor) -> Tensor:
+    mask = (target > 0) & (target < MAX)  # Avoid divide by zero
+    rel = torch.abs(target - pred)[mask] / (target[mask]+_eps)
+    return torch.mean(rel)
 
-def delta(pred: Tensor, target: Tensor, threshold: float = 1.25, eps: float = _eps) -> Tensor:
-    pred   = pred[..., 23:189, 22:615]
-    target = target[..., 23:189, 22:615]
-    valid  = target > eps
-    ratio  = torch.max(pred[valid]/(target[valid]+eps),
-                       target[valid]/(pred[valid]+eps))
-    return (ratio < threshold).float().mean()
+def delta(pred: Tensor, target: Tensor, threshold: float = 1.25) -> Tensor:
+    mask = (target > 0) & (target < MAX)
+    pred = pred[mask]
+    target = target[mask]
+    ratio = torch.max(pred / (target+_eps), target / (pred+_eps))
+    return torch.mean((ratio < threshold).float())
