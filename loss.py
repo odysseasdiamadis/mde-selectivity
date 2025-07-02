@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from math import exp
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
 import tqdm
 
@@ -118,13 +122,17 @@ class balanced_loss_function(nn.Module):
 
 
 class L_assign(nn.Module):
-    def __init__(self, channel_counts: list[int], lambda_: float, device: torch.device):
+    def __init__(self,channel_counts, response_compute: "ResponseCompute", lambda_: float, device: torch.device):
+        super().__init__()
         self.channel_counts = channel_counts
         self.lambda_ = lambda_
         self.device = device
+        self.response_compute = response_compute
 
     def forward(self,
-                 R: torch.Tensor,
+                #  R: torch.Tensor,
+                model,
+                batch,
                 device="cuda") -> torch.Tensor:
         """
         R: Tensor of shape [L, K_max, D] containing average responses R_{l,k,d}
@@ -133,55 +141,52 @@ class L_assign(nn.Module):
         
         Returns: scalar loss L_assign
         """
+        R = self.response_compute(model, batch)
         L, Kmax, D = R.shape
-        total = torch.tensor(0.0, device=device)
-        for l in range(L):
-            K_l = self.channel_counts[l]
-            # Slice out only the actual units in this layer:
-            R_l = R[l, :K_l, :]             # shape [K_l, D]
-            
-            # Assigned bin for each unit k:
-            # according to Eq. 6: d_k = floor( k * (K_l / D) )
-            # (here k runs 0..K_l-1)
-            ks = torch.arange(K_l, device=R.device)
-            d_k = (ks * K_l // D).long()    # shape [K_l]
-            
-            # Responses at assigned bins:
-            R_dk     = R_l[ks, d_k]         # shape [K_l]
-            
-            # Average of all *other* bins:
-            sum_all  = R_l.sum(dim=1)       # shape [K_l]
-            sum_oth  = sum_all - R_dk       # shape [K_l]
-            R_minus  = sum_oth / (D - 1)    # shape [K_l]
-            
-            # Now selectivity for each unit:
-            #   s_k = (|R_dk| - |R_minus|) / (|R_dk| + |R_minus| + ε)
-            eps = 1e-6
-            num =  (R_dk.abs() - R_minus.abs())
-            den =  (R_dk.abs() + R_minus.abs()).clamp(min=eps)
-            s_k = num / den                 # shape [K_l]
-            
-            total += s_k.sum()              # sum over units in layer l
-
-        # Average over all layers & scale
-        L_assign = - self.lambda_ * (total / sum(self.channel_counts))
+        
+        # Precompute tensors for vectorization
+        ks = torch.arange(Kmax, device=R.device).unsqueeze(0)  # [1, Kmax]
+        channel_counts_t = torch.tensor(self.channel_counts, device=R.device)  # [L]
+        
+        # 1. Compute bin assignments (Eq.6) for all layers/units
+        n_b = torch.minimum(channel_counts_t, torch.tensor(D, device=R.device))  # [L]
+        d_k = (ks[:, :Kmax] * n_b.unsqueeze(1)) // channel_counts_t.unsqueeze(1)  # [L, Kmax]
+        d_k = torch.clamp(d_k.long(), 0, D-1)  # Ensure valid bin indices
+        
+        # 2. Gather responses at assigned bins
+        l_indices = torch.arange(L, device=R.device).unsqueeze(1)  # [L, 1]
+        k_indices = ks.expand(L, Kmax)  # [L, Kmax]
+        R_dk = R[l_indices, k_indices, d_k]  # [L, Kmax]
+        
+        # 3. Compute average of other bins
+        R_sum = R.sum(dim=2)  # [L, Kmax]
+        R_minus = (R_sum - R_dk) / (D - 1)  # [L, Kmax]
+        
+        # 4. Compute selectivity scores (Eq.5)
+        abs_R_dk = R_dk.abs()
+        abs_R_minus = R_minus.abs()
+        s_k = (abs_R_dk - abs_R_minus) / (abs_R_dk + abs_R_minus + 1e-6)  # [L, Kmax]
+        
+        # 5. Create mask for valid units
+        valid_mask = ks < channel_counts_t.unsqueeze(1)  # [L, Kmax]
+        
+        # 6. Compute loss (Eq.5 scaled)
+        total_s_k = (s_k * valid_mask).sum()  # Only sum valid units
+        total_units = channel_counts_t.sum()
+        L_assign = -self.lambda_ * (total_s_k / total_units)
+        
         return L_assign
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 
-class ResponseCompute:
+class ResponseCompute(nn.Module):
     def __init__(
         self,
         model: nn.Module,
-        dataloader: DataLoader,
         device: torch.device,
         n_of_bins: int = 10
     ):
+        super().__init__()
         self.model      = model.to(device)
-        self.loader     = dataloader
         self.device     = device
         self.D          = n_of_bins
 
@@ -199,16 +204,18 @@ class ResponseCompute:
         # 2) Allocate accumulators
         #    total_response[l, k, d]: sum of activations for layer l, unit k, bin d
         #    mask_count[d]: total # of pixels falling in bin d (shared)
-        self.total_response = torch.zeros(self.L, self.K, self.D, device=device)
         self.mask_count = torch.zeros(self.D, device=device)
 
-    def compute_response(self, model, dataloader):
+    def forward(self, model: nn.Module, batch: tuple[torch.Tensor, torch.Tensor]):
+        self.total_response = torch.zeros(self.L, self.K, self.D, device=self.device)
         hooks = []
         def make_hook(layer_idx):
-            def hook_fn(module, input, output):
+            def hook_fn(module: nn.Module, input, output):
                 # output: (B, C, h_out, w_out)
                 fmap = output
                 B, C, _, _ = fmap.shape
+                if len(self.current_depth.shape) == 4:
+                    fmap = fmap.unsqueeze(-2)
 
                 # Upsample to current depth resolution
                 fmap_up = F.interpolate(
@@ -216,7 +223,7 @@ class ResponseCompute:
                     size=self.current_depth.shape[-2:],  # (H, W)
                     mode='bilinear',
                     align_corners=False
-                )  # → (B, C, H, W)
+                )  # → (B, C, H, W) 
 
                 # Depth bin edges for this batch
                 dmap = self.current_depth            # (B, H, W)
@@ -246,29 +253,22 @@ class ResponseCompute:
             hooks.append(module.register_forward_hook(make_hook(idx)))
 
         # 4) Loop over DataLoader
-        model.eval()
-        with torch.no_grad():
-            for imgs, depths in tqdm.tqdm(dataloader):
-                # imgs: (B, 3, H, W); depths: (B, 1, H, W) or (B, H, W)
-                imgs   = imgs.to(self.device)
-                depths = depths.to(self.device)
-                # Normalize depth shape to (B, H, W)
-                if depths.dim() == 4:
-                    depths = depths.squeeze(1)
-                self.current_depth = depths
+        # imgs: (B, 3, H, W); depths: (B, 1, H, W) or (B, H, W)
+        imgs   = batch[0].to(self.device)
+        depths = batch[1].to(self.device)
+        # Normalize depth shape to (B, H, W)
+        if depths.dim() == 4:
+            depths = depths.squeeze(1)
+        self.current_depth = depths
 
-                _ = model(imgs)
+        _ = model(imgs)
 
         # 5) Cleanup hooks
         for h in hooks:
             h.remove()
         
-
         # 6) Finalize R by dividing sums by pixel counts
         denom = self.mask_count.clamp(min=1e-6).view(1, 1, self.D)
         R = self.total_response / denom  # → (L, K, D)
-
-        # 7) Set model in train mode again
-        model.train()
         
         return R
