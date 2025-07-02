@@ -4,6 +4,8 @@ import torch
 import torch.nn.functional as F
 from math import exp
 
+import tqdm
+
 
 
 class Sobel(nn.Module):
@@ -113,3 +115,160 @@ class balanced_loss_function(nn.Module):
         loss_grad = (loss_dx + loss_dy) / self.lambda_1
 
         return loss_depth, loss_grad, loss_normal, loss_ssim
+
+
+class L_assign(nn.Module):
+    def __init__(self, channel_counts: list[int], lambda_: float, device: torch.device):
+        self.channel_counts = channel_counts
+        self.lambda_ = lambda_
+        self.device = device
+
+    def forward(self,
+                 R: torch.Tensor,
+                device="cuda") -> torch.Tensor:
+        """
+        R: Tensor of shape [L, K_max, D] containing average responses R_{l,k,d}
+        channel_counts: list of length L, where channel_counts[l] = K_l (#units in layer l)
+        λ: weighting hyperparameter
+        
+        Returns: scalar loss L_assign
+        """
+        L, Kmax, D = R.shape
+        total = torch.tensor(0.0, device=device)
+        for l in range(L):
+            K_l = self.channel_counts[l]
+            # Slice out only the actual units in this layer:
+            R_l = R[l, :K_l, :]             # shape [K_l, D]
+            
+            # Assigned bin for each unit k:
+            # according to Eq. 6: d_k = floor( k * (K_l / D) )
+            # (here k runs 0..K_l-1)
+            ks = torch.arange(K_l, device=R.device)
+            d_k = (ks * K_l // D).long()    # shape [K_l]
+            
+            # Responses at assigned bins:
+            R_dk     = R_l[ks, d_k]         # shape [K_l]
+            
+            # Average of all *other* bins:
+            sum_all  = R_l.sum(dim=1)       # shape [K_l]
+            sum_oth  = sum_all - R_dk       # shape [K_l]
+            R_minus  = sum_oth / (D - 1)    # shape [K_l]
+            
+            # Now selectivity for each unit:
+            #   s_k = (|R_dk| - |R_minus|) / (|R_dk| + |R_minus| + ε)
+            eps = 1e-6
+            num =  (R_dk.abs() - R_minus.abs())
+            den =  (R_dk.abs() + R_minus.abs()).clamp(min=eps)
+            s_k = num / den                 # shape [K_l]
+            
+            total += s_k.sum()              # sum over units in layer l
+
+        # Average over all layers & scale
+        L_assign = - self.lambda_ * (total / sum(self.channel_counts))
+        return L_assign
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+class ResponseCompute:
+    def __init__(
+        self,
+        model: nn.Module,
+        dataloader: DataLoader,
+        device: torch.device,
+        n_of_bins: int = 10
+    ):
+        self.model      = model.to(device)
+        self.loader     = dataloader
+        self.device     = device
+        self.D          = n_of_bins
+
+        # 1) Gather all Conv2d layers in order, record out_channels
+        self.conv_modules  = []
+        self.channel_counts = []
+        for m in self.model.modules():
+            if isinstance(m, nn.Conv2d):
+                self.conv_modules.append(m)
+                self.channel_counts.append(m.out_channels)
+
+        self.L = len(self.conv_modules)         # # of layers
+        self.K = max(self.channel_counts)       # max # of channels
+
+        # 2) Allocate accumulators
+        #    total_response[l, k, d]: sum of activations for layer l, unit k, bin d
+        #    mask_count[d]: total # of pixels falling in bin d (shared)
+        self.total_response = torch.zeros(self.L, self.K, self.D, device=device)
+        self.mask_count = torch.zeros(self.D, device=device)
+
+    def compute_response(self, model, dataloader):
+        hooks = []
+        def make_hook(layer_idx):
+            def hook_fn(module, input, output):
+                # output: (B, C, h_out, w_out)
+                fmap = output
+                B, C, _, _ = fmap.shape
+
+                # Upsample to current depth resolution
+                fmap_up = F.interpolate(
+                    fmap,
+                    size=self.current_depth.shape[-2:],  # (H, W)
+                    mode='bilinear',
+                    align_corners=False
+                )  # → (B, C, H, W)
+
+                # Depth bin edges for this batch
+                dmap = self.current_depth            # (B, H, W)
+                min_d, max_d = dmap.min(), dmap.max()
+                edges = torch.linspace(min_d, max_d, steps=self.D+1, device=self.device)
+
+                for d in range(self.D):
+                    # Build mask for bin d
+                    mask = (dmap > edges[d]) & (dmap <= edges[d+1])  # (B, H, W)
+                    if not mask.any():
+                        continue
+
+                    # Mask & sum activations
+                    masked = fmap_up * mask.unsqueeze(1)   # broadcast → (B, C, H, W)
+                    # Sum over batch & spatial dims → (C,)
+                    bin_sum = masked.sum(dim=(0,2,3))
+                    # Count how many pixels fell in bin d across the batch
+                    pix_cnt = mask.sum()                   # scalar
+
+                    # Accumulate
+                    self.total_response[layer_idx, :C, d] += bin_sum
+                    self.mask_count[d] += pix_cnt
+            return hook_fn
+
+        # 3) Register hooks on each Conv2d
+        for idx, module in enumerate(self.conv_modules):
+            hooks.append(module.register_forward_hook(make_hook(idx)))
+
+        # 4) Loop over DataLoader
+        model.eval()
+        with torch.no_grad():
+            for imgs, depths in tqdm.tqdm(dataloader):
+                # imgs: (B, 3, H, W); depths: (B, 1, H, W) or (B, H, W)
+                imgs   = imgs.to(self.device)
+                depths = depths.to(self.device)
+                # Normalize depth shape to (B, H, W)
+                if depths.dim() == 4:
+                    depths = depths.squeeze(1)
+                self.current_depth = depths
+
+                _ = model(imgs)
+
+        # 5) Cleanup hooks
+        for h in hooks:
+            h.remove()
+        
+
+        # 6) Finalize R by dividing sums by pixel counts
+        denom = self.mask_count.clamp(min=1e-6).view(1, 1, self.D)
+        R = self.total_response / denom  # → (L, K, D)
+
+        # 7) Set model in train mode again
+        model.train()
+        
+        return R

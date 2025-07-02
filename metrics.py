@@ -1,7 +1,6 @@
 from torch import Tensor
 import torch
 
-
 MAX = 1000.0
 _eps = 1e-4
 
