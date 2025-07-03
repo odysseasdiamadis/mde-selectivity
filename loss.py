@@ -193,8 +193,8 @@ class ResponseCompute(nn.Module):
         # 1) Gather all Conv2d layers in order, record out_channels
         self.conv_modules  = []
         self.channel_counts = []
-        for m in self.model.modules():
-            if isinstance(m, nn.Conv2d):
+        for name, m in self.model.named_modules():
+            if isinstance(m, nn.Conv2d) and "decoder" in name:
                 self.conv_modules.append(m)
                 self.channel_counts.append(m.out_channels)
 
@@ -206,69 +206,70 @@ class ResponseCompute(nn.Module):
         #    mask_count[d]: total # of pixels falling in bin d (shared)
         self.mask_count = torch.zeros(self.D, device=device)
 
-    def forward(self, model: nn.Module, batch: tuple[torch.Tensor, torch.Tensor]):
-        self.total_response = torch.zeros(self.L, self.K, self.D, device=self.device)
+    def forward(self, model: nn.Module, batch: tuple[torch.Tensor,torch.Tensor]):
+        imgs, depths = batch
+        imgs = imgs.to(self.device)
+        depths = depths.to(self.device).squeeze(1)   # → (B, H, W)
+        
+        # 1) register hooks that just stash the up‐sampled fmap per layer
+        fmap_list: list[torch.Tensor] = []
         hooks = []
-        def make_hook(layer_idx):
-            def hook_fn(module: nn.Module, input, output):
-                # output: (B, C, h_out, w_out)
-                fmap = output
-                B, C, _, _ = fmap.shape
-                if len(self.current_depth.shape) == 4:
-                    fmap = fmap.unsqueeze(-2)
+        def make_hook():
+            def hook(m, _in, out):
+                # out: (B, C, h', w')
+                fmap = F.interpolate(out, size=depths.shape[-2:], 
+                                    mode='bilinear', align_corners=False)
+                fmap_list.append(fmap)  # list of (B, C, H, W)
+            return hook
 
-                # Upsample to current depth resolution
-                fmap_up = F.interpolate(
-                    fmap,
-                    size=self.current_depth.shape[-2:],  # (H, W)
-                    mode='bilinear',
-                    align_corners=False
-                )  # → (B, C, H, W) 
-
-                # Depth bin edges for this batch
-                dmap = self.current_depth            # (B, H, W)
-                min_d, max_d = dmap.min(), dmap.max()
-                edges = torch.linspace(min_d, max_d, steps=self.D+1, device=self.device)
-
-                for d in range(self.D):
-                    # Build mask for bin d
-                    mask = (dmap > edges[d]) & (dmap <= edges[d+1])  # (B, H, W)
-                    if not mask.any():
-                        continue
-
-                    # Mask & sum activations
-                    masked = fmap_up * mask.unsqueeze(1)   # broadcast → (B, C, H, W)
-                    # Sum over batch & spatial dims → (C,)
-                    bin_sum = masked.sum(dim=(0,2,3))
-                    # Count how many pixels fell in bin d across the batch
-                    pix_cnt = mask.sum()                   # scalar
-
-                    # Accumulate
-                    self.total_response[layer_idx, :C, d] += bin_sum
-                    self.mask_count[d] += pix_cnt
-            return hook_fn
-
-        # 3) Register hooks on each Conv2d
-        for idx, module in enumerate(self.conv_modules):
-            hooks.append(module.register_forward_hook(make_hook(idx)))
-
-        # 4) Loop over DataLoader
-        # imgs: (B, 3, H, W); depths: (B, 1, H, W) or (B, H, W)
-        imgs   = batch[0].to(self.device)
-        depths = batch[1].to(self.device)
-        # Normalize depth shape to (B, H, W)
-        if depths.dim() == 4:
-            depths = depths.squeeze(1)
-        self.current_depth = depths
-
+        for conv in self.conv_modules:
+            hooks.append(conv.register_forward_hook(make_hook()))
+        
         _ = model(imgs)
-
-        # 5) Cleanup hooks
+        
         for h in hooks:
             h.remove()
+
+        # 2) compute global min/max and bin edges
+        d_min, d_max = depths.min(), depths.max()
+        edges = torch.linspace(d_min, d_max, steps=self.D + 1,
+                            device=self.device)  # (D+1,)
+
+        # 3) bucketize every pixel once:  idx in [0 .. D-1]
+        #    depths: (B,H,W) → flat idx: (B*H*W,)
+        flat_depths = depths.reshape(-1)
+        bin_idx = torch.bucketize(flat_depths, edges, right=True) - 1
+        # clamp to [0,D-1]
+        bin_idx = bin_idx.clamp(0, self.D-1)  # → (B*H*W,)
+
+        # 4) for each layer, do one scatter‐reduce over the pixel dimension
+        R = torch.zeros(len(fmap_list), self.K, self.D, device=self.device)
+        counts = torch.zeros(self.D, device=self.device)
         
-        # 6) Finalize R by dividing sums by pixel counts
-        denom = self.mask_count.clamp(min=1e-6).view(1, 1, self.D)
-        R = self.total_response / denom  # → (L, K, D)
-        
+        # We'll also build a global count vector in one go:
+        counts = torch.bincount(bin_idx, minlength=self.D)  # → (D,)
+
+        for layer_idx, fmap in enumerate(fmap_list):
+            # fmap: (B, C, H, W) → (C, B*H*W)
+            C = fmap.shape[1]
+            flat_f = fmap.reshape(fmap.shape[0], C, -1).permute(1, 0, 2)
+            flat_f = flat_f.reshape(C, -1)  # (C, B*H*W)
+
+            # scatter‐sum across the pixels into depth‐bins:
+            #   out: (C, D)
+            summed = torch.zeros(C, self.D, device=self.device)
+            # dim=1 because we scatter along the pixel axis
+            summed.scatter_reduce_(1, 
+                                bin_idx.unsqueeze(0).expand(C, -1), 
+                                flat_f, 
+                                reduce="sum", 
+                                include_self=False)
+
+            # store (and optionally trim/pad if C < K)
+            R[layer_idx, :C, :] = summed
+
+        # 5) divide out the counts (avoid div by zero)
+        denom = counts.clamp(min=1e-6).view(1, 1, self.D)
+        R = R / denom
+
         return R
