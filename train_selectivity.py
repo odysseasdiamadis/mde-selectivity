@@ -86,6 +86,8 @@ def train_epoch(
     """Train for one epoch."""
     model.train()
     epoch_total_loss = torch.tensor([0.0], device=device)
+    epoch_total_selectivity_loss = torch.tensor([0.0], device=device)
+    epoch_total_depth_loss = torch.tensor([0.0], device=device)
     num_batches = len(dataloader)
     log_step = config["training"].get("log_step_loss")
 
@@ -120,7 +122,8 @@ def train_epoch(
         optimizer.step()
 
         epoch_total_loss += loss.item()
-
+        epoch_total_selectivity_loss += loss_assign.item()
+        epoch_total_depth_loss += loss_base.item()
         # Update progress bar
         progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
 
@@ -131,7 +134,7 @@ def train_epoch(
         ):
             logging.info(f"Batch {batch_idx}/{num_batches}, Loss: {loss.item():.4f}")
 
-    return epoch_total_loss / num_batches, step_losses
+    return epoch_total_loss / num_batches, step_losses, epoch_total_depth_loss, epoch_total_selectivity_loss
 
 
 def validate_epoch(model, dataloader, criterion, device):
@@ -222,7 +225,7 @@ def train(config, ckpt_path=None) -> None:
         logging.info(f"Epoch {epoch+1}/{config['training']['num_epochs']}")
 
         # Train
-        train_loss, epoch_losses = train_epoch(
+        train_loss, epoch_losses, loss_depth, loss_selectivity = train_epoch(
             model,
             train_loader,
             resp_comp=resp_compute,
@@ -242,7 +245,7 @@ def train(config, ckpt_path=None) -> None:
         # Log epoch results
         current_lr = optimizer.param_groups[0]["lr"]
         logging.info(
-            f"Epoch {epoch+1} - Train Loss: {train_loss.item():.4f}, Val Loss: {val_loss.item():.4f}, LR: {current_lr:.6f}"
+            f"Epoch {epoch+1} - Train Loss: {train_loss.item():.4f} ({loss_depth.item():.4f} + {loss_selectivity.item():.4f}), Val Loss: {val_loss.item():.4f}, LR: {current_lr:.6f}"
         )
         losses = losses + epoch_losses
         # Save checkpoint
