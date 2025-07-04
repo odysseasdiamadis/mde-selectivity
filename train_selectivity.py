@@ -100,23 +100,23 @@ def train_epoch(
         optimizer.zero_grad()
 
         outputs = model(images)
-        loss = criterion(outputs, targets)
+        loss_base = criterion(outputs, targets)
 
         if log_step:
             step_losses.append(
                 {
-                    "depth": loss[0].item(),
-                    "grad": loss[1].item(),
-                    "normal": loss[2].item(),
-                    "ssim": loss[3].item(),
+                    "depth": loss_base[0].item(),
+                    "grad": loss_base[1].item(),
+                    "normal": loss_base[2].item(),
+                    "ssim": loss_base[3].item(),
                 }
             )
 
-        loss = torch.stack(loss, dim=0).sum()
+        loss_base = torch.stack(tensors=loss_base, dim=0).sum()
         loss_assign = l_assign(model, (images, targets))
 
-        epoch_total_loss = loss + loss_assign
-        epoch_total_loss.backward()
+        loss = loss_base + loss_assign
+        loss.backward()
         optimizer.step()
 
         epoch_total_loss += loss.item()
@@ -176,7 +176,7 @@ def train(config, ckpt_path=None) -> None:
     model = build_METER_model(device, arch_type=config["model"]["variant"])
 
     resp_compute = ResponseCompute(model, device=device, n_of_bins=10)
-    l_assign = L_assign(resp_compute.channel_counts, resp_compute, 0.1, device)
+    l_assign = L_assign(resp_compute.channel_counts, resp_compute, 1, device)
 
     optimizer = optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"])
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30)
