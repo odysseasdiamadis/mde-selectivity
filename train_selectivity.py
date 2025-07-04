@@ -134,7 +134,7 @@ def train_epoch(
         ):
             logging.info(f"Batch {batch_idx}/{num_batches}, Loss: {loss.item():.4f}")
 
-    return epoch_total_loss / num_batches, step_losses, epoch_total_depth_loss, epoch_total_selectivity_loss
+    return epoch_total_loss / num_batches, step_losses, epoch_total_depth_loss / num_batches, epoch_total_selectivity_loss / num_batches
 
 
 def validate_epoch(model, dataloader, criterion, device):
