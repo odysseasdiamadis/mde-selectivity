@@ -186,7 +186,7 @@ def train(config_path, ckpt_path=None) -> None:
     l_assign = L_assign(resp_compute.channel_counts, resp_compute, config['training']['lambda'], device)
 
     optimizer = optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"], weight_decay=0.001)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
     criterion = balanced_loss_function(device, dtype=dtype)
     model = model.to(device=device, dtype=dtype)
     criterion = criterion.to(device="cuda", dtype=dtype)
@@ -214,6 +214,7 @@ def train(config_path, ckpt_path=None) -> None:
         batch_size=config["training"]["batch_size"],
         num_workers=config["data"]["num_workers"],
         pin_memory=pin_memory,
+        shuffle=True
     )
     val_loader = DataLoader(
         val_ds,
