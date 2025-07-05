@@ -115,14 +115,14 @@ def train_epoch(
             )
 
         loss_base = torch.stack(tensors=loss_base, dim=0).sum()
-        # loss_assign = l_assign(model, (images, targets))
+        loss_assign = l_assign(model, (images, targets))
 
-        loss = loss_base #+ loss_assign
+        loss = loss_base + loss_assign
         loss.backward()
         optimizer.step()
 
         epoch_total_loss += loss.item()
-        #epoch_total_selectivity_loss += loss_assign.item()
+        epoch_total_selectivity_loss += loss_assign.item()
         epoch_total_depth_loss += loss_base.item()
         # Update progress bar
         progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
