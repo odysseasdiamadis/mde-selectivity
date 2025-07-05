@@ -161,7 +161,7 @@ def train(config_path, ckpt_path=None) -> None:
     os.makedirs(config['logging']['checkpoint_dir'], exist_ok=True)
     shutil.copy(config_path, os.path.join(config['logging']['checkpoint_dir'], 'config.yaml'))
 
-    optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
+    optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=0.001)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30)
     criterion = balanced_loss_function(device, dtype=dtype)
     model = model.to(device=device, dtype=dtype)

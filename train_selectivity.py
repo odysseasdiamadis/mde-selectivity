@@ -185,7 +185,7 @@ def train(config_path, ckpt_path=None) -> None:
     resp_compute = ResponseCompute(model, device=device, config=config, n_of_bins=10)
     l_assign = L_assign(resp_compute.channel_counts, resp_compute, config['training']['lambda'], device)
 
-    optimizer = optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"])
+    optimizer = optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"], weight_decay=0.001)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30)
     criterion = balanced_loss_function(device, dtype=dtype)
     model = model.to(device=device, dtype=dtype)
