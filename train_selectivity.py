@@ -179,8 +179,11 @@ def train(config_path, ckpt_path=None) -> None:
     # Get model
     model = build_METER_model(device, arch_type=config["model"]["variant"])
 
+    model = torch.nn.DataParallel(model, list(range(torch.cuda.device_count())))
+    model = model.to(device)
+
     resp_compute = ResponseCompute(model, device=device, config=config, n_of_bins=10)
-    l_assign = L_assign(resp_compute.channel_counts, resp_compute, config['training']['lamdba'], device)
+    l_assign = L_assign(resp_compute.channel_counts, resp_compute, config['training']['lambda'], device)
 
     optimizer = optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"])
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30)

@@ -1,19 +1,23 @@
 # Training configuration
 model:
   name: "METER"
-  variant: "xxs"  # xxs, xs, s
+  variant: "s"  # xxs, xs, s
 
 training:
   batch_size: 32
   learning_rate: 0.001
   num_epochs: 60
   log_step_loss: True
+  lambda: 1 # selecitivty factor
+  n_of_bins: 10 # bins for selectivity
+  layers: ["MV2Block", "MobileViTBlock"] # layer classes to assign selectivity to
 
 
 data:
-  root: "/path/to/raw/images
+  root: "/mnt/data/nyu/nyu_data/data"
+  split_files_folder: "./data_splits"
   train_val_split: [0.9, 0.1]
-  num_workers: 10
+  num_workers: 8
   shuffle: true
 
 device:
