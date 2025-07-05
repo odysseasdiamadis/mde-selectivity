@@ -1,3 +1,4 @@
+import shutil
 import sys
 import pandas as pd
 import torch
@@ -138,7 +139,8 @@ def validate_epoch(model, dataloader, criterion, device):
     return total_loss / num_batches
 
 
-def train(config, ckpt_path=None) -> None:
+def train(config_path, ckpt_path=None) -> None:
+    config = load_config(config_path)
     dtype = torch.float32
     # Setup logging
     setup_logging(config['logging']['log_dir'])
@@ -156,6 +158,8 @@ def train(config, ckpt_path=None) -> None:
     # Get model
     model = build_METER_model(device, arch_type=config['model']['variant'])
 
+    os.makedirs(config['logging']['checkpoint_dir'], exist_ok=True)
+    shutil.copy(config_path, os.path.join(config['logging']['checkpoint_dir'], 'config.yaml'))
 
     optimizer = optim.AdamW(model.parameters(), lr=config['training']['learning_rate'])
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30)
@@ -225,8 +229,7 @@ def main():
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     
-    config = load_config(config_path)
-    train(config, ckpt_path=ckpt_path)
+    train(config_path, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":

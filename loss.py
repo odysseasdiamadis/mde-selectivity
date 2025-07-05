@@ -183,18 +183,21 @@ class ResponseCompute(nn.Module):
         self,
         model: nn.Module,
         device: torch.device,
+        config,
         n_of_bins: int = 10
     ):
         super().__init__()
-        self.model      = model.to(device)
-        self.device     = device
-        self.D          = n_of_bins
+        self.model = model.to(device)
+        self.device = device
+        self.D = n_of_bins
+        self.layers = config['training']['layers']
 
         # 1) Gather all Conv2d layers in order, record out_channels
         self.conv_modules  = []
         self.channel_counts = []
+        all_channels = []
         for name, m in self.model.named_modules():
-            if isinstance(m, nn.Conv2d) and "decoder" in name:
+            if m.__class__.__name__ in self.layers:
                 self.conv_modules.append(m)
                 self.channel_counts.append(m.out_channels)
 

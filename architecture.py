@@ -116,6 +116,7 @@ class MV2Block(nn.Module):
 
         hidden_dim = int(inp * expansion)
         self.use_res_connect = self.stride == 1 and inp == oup
+        self.out_channels = oup
 
         if expansion == 1:
             self.conv = nn.Sequential(
@@ -152,6 +153,7 @@ class MV2Block(nn.Module):
 class MobileViTBlock(nn.Module):
     def __init__(self, dim, depth, channel, kernel_size, patch_size, mlp_dim, dropout=0.):
         super().__init__()
+        self.out_channel = channel
         self.ph, self.pw = patch_size
 
         self.conv1 = conv_nxn_bn(channel, channel, kernel_size)
