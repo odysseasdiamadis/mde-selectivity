@@ -188,9 +188,7 @@ def train(config_path, ckpt_path=None) -> None:
     model = torch.nn.DataParallel(model, list(range(torch.cuda.device_count())))
     model = model.to(device)
     resp_compute = ResponseCompute(model, device=device, config=config, n_of_bins=10)
-    l_assign = L_assign(
-        resp_compute.channel_counts, resp_compute, config["training"]["lambda"], device
-    )
+    l_assign = L_assign(resp_compute, config["training"]["lambda"], device)
 
     optimizer = optim.AdamW(
         model.parameters(),

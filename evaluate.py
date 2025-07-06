@@ -15,7 +15,7 @@ from torchvision.transforms import v2 as t
 from tqdm import tqdm
 
 from architecture import build_METER_model
-from data import NYUDataset, RescaleDepth
+from data import NYUDataset
 from loss import balanced_loss_function
 from metrics import REL, RMSE, delta
 from torch.profiler import profile, record_function, ProfilerActivity
@@ -51,81 +51,54 @@ def load_checkpoint(model, checkpoint_path):
     return model
 
 
-def compute_dataset_response(
-    model: torch.nn.Module,
-    conv_modules: list[torch.nn.Conv2d],
-    loader: torch.utils.data.DataLoader,
-    device: torch.device,
-    n_of_bins: int,
-) -> tuple[torch.Tensor, list]:
-    """
-    Compute R over the *entire* dataset for evaluation.
+def compute_dataset_response_batch_resistant(
+    model, counts, loader, device, n_of_bins,
+    depth_min=0.0, depth_max=1000.0
+):
+    D    = n_of_bins
+    L    = len(counts)
+    K_l  = counts
+    Kmax = max(K_l)
 
-    Args:
-      model         : your full depth model
-      conv_modules  : list of Conv2d layers (in the same order you use for L_assign)
-      dataset       : a torch Dataset returning (img, depth) pairs
-      device        : cuda or cpu
-      n_of_bins     : number of depth bins D
+    # fixed, global edges
+    edges = torch.linspace(depth_min, depth_max, D+1, device=device)
 
-    Returns:
-      R : Tensor of shape [L, K_max, D] with the dataset‐wide average responses
-    """
-    D = n_of_bins
-    L = len(conv_modules)
-    K_list = [m.out_channels for m in conv_modules]
-    Kmax = max(K_list)
-
-    # accumulators
     sum_response = torch.zeros(L, Kmax, D, device=device)
-    count_bins = torch.zeros(D, device=device)
+    count_bins   = torch.zeros(D, device=device)
 
     model.eval()
     with torch.no_grad():
         for imgs, depths in loader:
-            # move & shape
-            imgs = imgs.to(device)
-            depths = depths.to(device).squeeze(1)  # (B, H, W)
+            imgs   = imgs.to(device)
+            depths = depths.to(device).squeeze(1)  # (B,H,W)
             B, H, W = depths.shape
 
-            # compute bin edges for this batch
-            dmin, dmax = depths.min(), depths.max()
-            edges = torch.linspace(dmin, dmax, steps=D + 1, device=device)
-
-            # flatten depths & compute bin idx
-            flat_d = depths.view(-1)
-            bidx = torch.bucketize(flat_d, edges, right=True) - 1
-            bidx = bidx.clamp(0, D - 1)  # (B*H*W,)
-
-            # accumulate pixel counts
+            # bucketize with **fixed** edges
+            bidx = torch.bucketize(depths.reshape(-1), edges, right=True) - 1
+            bidx = bidx.clamp(0, D-1)
             count_bins += torch.bincount(bidx, minlength=D).to(device)
 
-            out, fmap_list = model(imgs)
+            # forward + get your fmap_list (in same order as conv_modules)
+            _, fmap_list = model(imgs)
 
-            # now for each layer, scatter‐sum
-            for idx, fmap in fmap_list:
-                # fmap: (B, C, H, W) → flatten pixels
+            for i, fmap in enumerate(fmap_list):
                 C = fmap.shape[1]
-                flat_f = fmap.permute(1, 0, 2, 3).reshape(C, -1)  # (C, B*H*W)
-
-                # scatter into bins
-                summed = torch.zeros(C, D, device=device)
-                # bidx expands for each channel
+                # upsample to (H,W)
+                fmap_up = F.interpolate(fmap, size=(H,W), mode='bilinear', align_corners=False)
+                flat_f   = fmap_up.permute(1,0,2,3).reshape(C, -1)
+                summed   = torch.zeros(C, D, device=device)
                 summed.scatter_reduce_(
-                    dim=1,
-                    index=bidx.unsqueeze(0).expand(C, -1),
-                    src=flat_f,
+                    1,
+                    bidx.unsqueeze(0).expand(C, -1),
+                    flat_f,
                     reduce="sum",
                     include_self=False,
                 )
+                sum_response[i, :C, :] += summed
 
-                sum_response[idx, :C, :] += summed
-
-    # normalize by count_bins → R
-    denom = count_bins.clamp(min=1e-6).view(1, 1, D)
-    R = sum_response / denom
-
-    return R, fmap_list
+    # normalize
+    R = sum_response / count_bins.clamp(min=1e-6).view(1,1,D)
+    return R
 
 
 def compute_selectivity(
@@ -199,7 +172,7 @@ def evaluate(model: nn.Module, dataloader, criterion, device):
             batch_size = images.size(0)
             total_samples += batch_size
 
-    return metrics
+    return metrics, fmaps
 
 
 def main():
@@ -236,22 +209,17 @@ def main():
     model = model.to(device, dtype=dtype)
 
     load_checkpoint(model, checkpoint_path)
-    metrics = evaluate(
+    metrics, fmaps = evaluate(
         model,
         dataloader,
         criterion=balanced_loss_function(device, dtype=dtype).to(device, dtype),
         device=device,
     )
-    conv_layers = [
-        m
-        for name, m in model.named_modules()
-        if m.__class__.__name__ in config["training"]["layers"]
-    ]
-    counts = [m.out_channels for m in conv_layers]
+    
+    counts = [m.shape[1] for m in fmaps]
 
-
-    R, fmap = compute_dataset_response(
-        model, conv_layers, dataloader, device, config["training"]["n_of_bins"]
+    R, fmap = compute_dataset_response_batch_resistant(
+        model, counts, dataloader, device, config["training"]["n_of_bins"]
     )
 
     S = compute_selectivity(R, counts, eps=1e-6)
@@ -259,7 +227,7 @@ def main():
     df = pd.DataFrame(metrics).mean()
     for i in range(S.shape[0]):
         for j in range(S.shape[0]):
-            df[f'S_{i}_{j}'] = S[i,j].item()
+            df[f"S_{i}_{j}"] = S[i, j].item()
     df.to_csv("./metrics.csv", float_format="%.6f")
     print(df.to_string(float_format="{:,.6f}".format))
 
