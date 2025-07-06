@@ -5,14 +5,13 @@ import numpy as np
 import torch
 from torchvision.datasets import VisionDataset
 from torchvision.transforms import v2 as t
-
+from torchvision.transforms.functional import to_tensor
 from augmentation import augmentation2D, custom_tensor_augmentation
 
 
-class RescaleDepth(t.Transform):
+class Depth2Tensor(t.Transform):
     def __init__(self, scale):
         super().__init__()
-        self.scale = scale
 
     def forward(self, *img):
         rgb, depth = img
@@ -32,19 +31,18 @@ class NYUDataset(VisionDataset):
         self.rgb_transform = t.Compose([
             t.Resize((192,256)),
             t.ToImage(),
-            t.ToDtype(dtype, scale=False)
+            t.ToDtype(dtype, scale=True)
         ])
         self.depth_transform = t.Compose([
             t.Resize((48,64)),
             t.ToImage(),
-            t.ToDtype(dtype)
+            t.ToDtype(dtype, scale=(not self.test))
         ])
         self.test = test
         if test:
             csv_path = os.path.join(root, 'nyu2_test.csv')
         else:
             csv_path = os.path.join(root, 'nyu2_train.csv')
-        print(root)
 
         self.samples = []
 
@@ -74,6 +72,6 @@ class NYUDataset(VisionDataset):
 
         if not self.test:
             rgb, depth = custom_tensor_augmentation(rgb, depth, dtype=self.dtype)
+            depth = depth*1000 # cm
         
-        depth = depth/10.0 # cm to respect the augmentation
         return rgb, depth
