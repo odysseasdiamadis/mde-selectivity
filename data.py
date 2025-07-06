@@ -27,6 +27,7 @@ class NYUDataset(VisionDataset):
                  dtype=torch.float32
                 ):
         super().__init__(root, transforms)
+        self.test = test
         self.dtype = dtype
         self.rgb_transform = t.Compose([
             t.Resize((192,256)),
@@ -38,7 +39,6 @@ class NYUDataset(VisionDataset):
             t.ToImage(),
             t.ToDtype(dtype, scale=(not self.test))
         ])
-        self.test = test
         if test:
             csv_path = os.path.join(root, 'nyu2_test.csv')
         else:
@@ -71,7 +71,7 @@ class NYUDataset(VisionDataset):
         depth = self.depth_transform(depth)
 
         if not self.test:
-            rgb, depth = custom_tensor_augmentation(rgb, depth, dtype=self.dtype)
             depth = depth*1000 # cm
+            rgb, depth = custom_tensor_augmentation(rgb, depth, dtype=self.dtype)
         
         return rgb, depth

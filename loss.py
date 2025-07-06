@@ -124,7 +124,6 @@ class balanced_loss_function(nn.Module):
 class L_assign(nn.Module):
     def __init__(self,channel_counts, response_compute: "ResponseCompute", lambda_: float, device: torch.device):
         super().__init__()
-        self.channel_counts = channel_counts
         self.lambda_ = lambda_
         self.device = device
         self.response_compute = response_compute
@@ -133,6 +132,7 @@ class L_assign(nn.Module):
                 #  R: torch.Tensor,
                 model,
                 batch,
+                fmaps,
                 device="cuda") -> torch.Tensor:
         """
         R: Tensor of shape [L, K_max, D] containing average responses R_{l,k,d}
@@ -141,10 +141,12 @@ class L_assign(nn.Module):
         
         Returns: scalar loss L_assign
         """
-        R = self.response_compute(model, batch)
+        self.channel_counts = [fmap.shape[1] for fmap in fmaps]
+        R = self.response_compute(model, batch, fmaps)
         L, Kmax, D = R.shape
         
         # Precompute tensors for vectorization
+
         ks = torch.arange(Kmax, device=R.device).unsqueeze(0)  # [1, Kmax]
         channel_counts_t = torch.tensor(self.channel_counts, device=R.device)  # [L]
         
@@ -209,29 +211,29 @@ class ResponseCompute(nn.Module):
         #    mask_count[d]: total # of pixels falling in bin d (shared)
         self.mask_count = torch.zeros(self.D, device=device)
 
-    def forward(self, model: nn.Module, batch: tuple[torch.Tensor,torch.Tensor]):
+    def forward(self, model: nn.Module, batch, fmap_list) -> torch.Tensor:
         imgs, depths = batch
         imgs = imgs.to(self.device)
         depths = depths.to(self.device).squeeze(1)   # → (B, H, W)
         
         # 1) register hooks that just stash the up‐sampled fmap per layer
-        fmap_list: list[torch.Tensor] = []
-        hooks = []
-        def make_hook():
-            def hook(m, _in, out):
-                # out: (B, C, h', w')
-                fmap = F.interpolate(out, size=depths.shape[-2:], 
-                                    mode='bilinear', align_corners=False)
-                fmap_list.append(fmap)  # list of (B, C, H, W)
-            return hook
+        # fmap_list: list[torch.Tensor] = []
+        # hooks = []
+        # def make_hook():
+        #     def hook(m, _in, out):
+        #         # out: (B, C, h', w')
+        #         fmap = F.interpolate(out, size=depths.shape[-2:], 
+        #                             mode='bilinear', align_corners=False)
+        #         fmap_list.append(fmap)  # list of (B, C, H, W)
+        #     return hook
 
-        for conv in self.conv_modules:
-            hooks.append(conv.register_forward_hook(make_hook()))
+        # for conv in self.conv_modules:
+        #     hooks.append(conv.register_forward_hook(make_hook()))
         
-        _ = model(imgs)
+        # _ = model(imgs)
         
-        for h in hooks:
-            h.remove()
+        # for h in hooks:
+        #     h.remove()
 
         # 2) compute global min/max and bin edges
         d_min, d_max = depths.min(), depths.max()
@@ -254,6 +256,9 @@ class ResponseCompute(nn.Module):
 
         for layer_idx, fmap in enumerate(fmap_list):
             # fmap: (B, C, H, W) → (C, B*H*W)
+            fmap = F.interpolate(fmap, size=depths.shape[-2:], 
+                    mode='bilinear', align_corners=False)
+
             C = fmap.shape[1]
             flat_f = fmap.reshape(fmap.shape[0], C, -1).permute(1, 0, 2)
             flat_f = flat_f.reshape(C, -1)  # (C, B*H*W)

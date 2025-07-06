@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "requests>=2.32.4",
     "scipy>=1.15.3",
+    "seaborn>=0.13.2",
     "tensorboard>=2.19.0",
     "tensorboard-plugin-profile>=2.20.1",
     "torch>=2.7.1",

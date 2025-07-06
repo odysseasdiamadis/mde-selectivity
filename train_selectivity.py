@@ -10,12 +10,13 @@ from tqdm import tqdm
 from torchvision.transforms import v2 as t
 
 from architecture import build_METER_model
-from data import NYUDataset, RescaleDepth
+from data import NYUDataset
 from loss import L_assign, ResponseCompute, balanced_loss_function
 
 torch.manual_seed(42)
 # device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 # torch.set_default_device(device)
+
 
 def load_config(config_path):
     """Load configuration from YAML file."""
@@ -101,7 +102,7 @@ def train_epoch(
 
         optimizer.zero_grad()
 
-        outputs = model(images)
+        outputs, fmaps = model(images)
         loss_base = criterion(outputs, targets)
 
         if log_step:
@@ -115,7 +116,7 @@ def train_epoch(
             )
 
         loss_base = torch.stack(tensors=loss_base, dim=0).sum()
-        loss_assign = l_assign(model, (images, targets))
+        loss_assign = l_assign(model, (images, targets), fmaps)
 
         loss = loss_base + loss_assign
         loss.backward()
@@ -134,7 +135,12 @@ def train_epoch(
         ):
             logging.info(f"Batch {batch_idx}/{num_batches}, Loss: {loss.item():.4f}")
 
-    return epoch_total_loss / num_batches, step_losses, epoch_total_depth_loss / num_batches, epoch_total_selectivity_loss / num_batches
+    return (
+        epoch_total_loss / num_batches,
+        step_losses,
+        epoch_total_depth_loss / num_batches,
+        epoch_total_selectivity_loss / num_batches,
+    )
 
 
 def validate_epoch(model, dataloader, criterion, device):
@@ -150,7 +156,7 @@ def validate_epoch(model, dataloader, criterion, device):
             images = images.to(device)
             targets = targets.to(device)
 
-            outputs = model(images)
+            outputs, fmaps = model(images)
             loss = criterion(outputs, targets)
             loss = torch.stack(loss, dim=0).sum()
 
@@ -181,11 +187,16 @@ def train(config_path, ckpt_path=None) -> None:
 
     model = torch.nn.DataParallel(model, list(range(torch.cuda.device_count())))
     model = model.to(device)
-
     resp_compute = ResponseCompute(model, device=device, config=config, n_of_bins=10)
-    l_assign = L_assign(resp_compute.channel_counts, resp_compute, config['training']['lambda'], device)
+    l_assign = L_assign(
+        resp_compute.channel_counts, resp_compute, config["training"]["lambda"], device
+    )
 
-    optimizer = optim.AdamW(model.parameters(), lr=config["training"]["learning_rate"], weight_decay=0.001)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=config["training"]["learning_rate"],
+        weight_decay=config["training"].get("weight_decay") or 0.01,
+    )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
     criterion = balanced_loss_function(device, dtype=dtype)
     model = model.to(device=device, dtype=dtype)
@@ -214,7 +225,7 @@ def train(config_path, ckpt_path=None) -> None:
         batch_size=config["training"]["batch_size"],
         num_workers=config["data"]["num_workers"],
         pin_memory=pin_memory,
-        shuffle=True
+        shuffle=True,
     )
     val_loader = DataLoader(
         val_ds,

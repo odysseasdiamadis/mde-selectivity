@@ -14,11 +14,20 @@
             "console": "integratedTerminal"
         },
         {
+            "name": "Train Selectivity",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "train_selectivity.py",
+            "justMyCode": false,
+            "args": ["config.yaml"],
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Eval",
             "type": "debugpy",
             "request": "launch",
             "program": "evaluate.py",
-            "args": ["config.yaml", "models/build_model_best_nyu_s"],
+            "args": ["config.yaml", "exp1/checkpoints/best_model.pth"],
             "console": "internalConsole"
         }
     ]

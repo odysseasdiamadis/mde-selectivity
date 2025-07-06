@@ -11,7 +11,7 @@ from tqdm import tqdm
 from torchvision.transforms import v2 as t
 
 from architecture import build_METER_model
-from data import NYUDataset, RescaleDepth
+from data import NYUDataset
 from loss import balanced_loss_function
 
 torch.manual_seed(42)

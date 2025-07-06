@@ -80,7 +80,6 @@ def compute_dataset_response(
     sum_response = torch.zeros(L, Kmax, D, device=device)
     count_bins = torch.zeros(D, device=device)
 
-    # we will bucketize globally once per batch
     model.eval()
     with torch.no_grad():
         for imgs, depths in loader:
@@ -101,27 +100,7 @@ def compute_dataset_response(
             # accumulate pixel counts
             count_bins += torch.bincount(bidx, minlength=D).to(device)
 
-            # capture each layer’s fmap
-            fmap_list = []
-            hooks = []
-
-            def mk_hook(idx):
-                def hook(_, __, out):
-                    # upsample to (H,W)
-                    up = torch.nn.functional.interpolate(
-                        out, size=(H, W), mode="bilinear", align_corners=False
-                    )
-                    fmap_list.append((idx, up))
-
-                return hook
-
-            for idx, m in enumerate(conv_modules):
-                hooks.append(m.register_forward_hook(mk_hook(idx)))
-
-            _ = model(imgs)
-
-            for h in hooks:
-                h.remove()
+            out, fmap_list = model(imgs)
 
             # now for each layer, scatter‐sum
             for idx, fmap in fmap_list:
@@ -195,12 +174,11 @@ def evaluate(model: nn.Module, dataloader, criterion, device):
         for images, targets in progress_bar:
             images = images.to(device)
             targets = targets.to(device)
-            _ = model(images)  # warm-up step because of image lazy loading
 
             torch.cuda.synchronize()
 
             tic = time.time()
-            outputs = model(images)
+            outputs, fmaps = model(images)
             torch.cuda.synchronize()
             toc = time.time() - tic
             loss = criterion(outputs, targets)

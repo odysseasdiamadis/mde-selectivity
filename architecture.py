@@ -127,6 +127,7 @@ class MV2Block(nn.Module):
                 # pw-linear
                 nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(oup),
+                nn.ReLU()
             )
         else:
             self.conv = nn.Sequential(
@@ -141,6 +142,7 @@ class MV2Block(nn.Module):
                 # pw-linear
                 nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.BatchNorm2d(oup),
+                nn.ReLU()
             )
 
     def forward(self, x):
@@ -192,6 +194,8 @@ class MobileViT(nn.Module):
         ph, pw = patch_size
         assert ih % ph == 0 and iw % pw == 0
 
+        self.fmaps = []
+
         L = [1, 1, 1]
 
         self.conv1 = conv_nxn_bn(3, channels[0], stride=2)
@@ -214,24 +218,31 @@ class MobileViT(nn.Module):
 
 
     def forward(self, x):
+        fmaps = []
         y0 = self.conv1(x)
         x = self.mv2[0](y0)
+        fmaps.append(x)
 
         y1 = self.mv2[1](x)
         x = self.mv2[2](y1)
+        fmaps.append(x)
         x = self.mv2[3](x)  # Repeat
+        fmaps.append(x)
 
         y2 = self.mv2[4](x)
         x = self.mvit[0](y2)
+        fmaps.append(x)
 
         y3 = self.mv2[5](x)
+        fmaps.append(x)
         x = self.mvit[1](y3)
 
         x = self.mv2[6](x)
+        fmaps.append(x)
         x = self.mvit[2](x)
         x = self.conv2(x)
 
-        return x, [y0, y1, y2, y3]
+        return x, [y0, y1, y2, y3], fmaps
 
 
 def mobilevit_xxs():
@@ -325,6 +336,6 @@ class build_METER_model(nn.Module):
         self.decoder = decoder(device=device, typ=enc_type)
 
     def forward(self, x):
-        x, enc_layer = self.encoder(x)
+        x, enc_layer, fmaps = self.encoder(x)
         x = self.decoder(x, enc_layer)
-        return x
+        return x, fmaps
