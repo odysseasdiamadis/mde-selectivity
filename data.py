@@ -18,9 +18,9 @@ class Depth2Tensor(t.Transform):
     def forward(self, *depth):
         depth = torchvision.transforms.functional.to_tensor(depth[0])
         if depth.max() > 1:  # test set, 10m in mm (10_000)
-            depth = depth / 1000
+            depth = depth / 10
         else:  # train set, regular [0,255] that gets normalized to [0,1]
-            depth = depth * 10
+            depth = depth * 1000
         return depth
 
 
