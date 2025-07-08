@@ -3,19 +3,25 @@ from typing import Callable, Optional
 from PIL import Image
 import numpy as np
 import torch
+import torchvision
 from torchvision.datasets import VisionDataset
 from torchvision.transforms import v2 as t
 from torchvision.transforms.functional import to_tensor
+import torchvision.transforms.functional
 from augmentation import augmentation2D, custom_tensor_augmentation
 
 
 class Depth2Tensor(t.Transform):
-    def __init__(self, scale):
+    def __init__(self):
         super().__init__()
 
-    def forward(self, *img):
-        rgb, depth = img
-        return rgb, depth * self.scale
+    def forward(self, *depth):
+        depth = torchvision.transforms.functional.to_tensor(depth[0])
+        if depth.max() > 1:             # test set, 10m in mm (10_000)
+            depth = depth/10
+        else:                           # train set, regular [0,255] that gets normalized to [0,1]
+            depth = depth*1000
+        return depth
 
 
 
@@ -32,13 +38,9 @@ class NYUDataset(VisionDataset):
         self.rgb_transform = t.Compose([
             t.Resize((192,256)),
             t.ToImage(),
-            t.ToDtype(dtype, scale=True)
+            t.ToDtype(dtype)
         ])
-        self.depth_transform = t.Compose([
-            t.Resize((48,64)),
-            t.ToImage(),
-            t.ToDtype(dtype, scale=(not self.test))
-        ])
+        self.depth_transform = Depth2Tensor()
         if test:
             csv_path = os.path.join(root, 'nyu2_test.csv')
         else:
@@ -71,7 +73,6 @@ class NYUDataset(VisionDataset):
         depth = self.depth_transform(depth)
 
         if not self.test:
-            depth = depth*1000 # cm
             rgb, depth = custom_tensor_augmentation(rgb, depth, dtype=self.dtype)
         
         return rgb, depth

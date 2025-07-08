@@ -88,7 +88,7 @@ def train_epoch(model, dataloader, criterion, optimizer, device, config):
         
         optimizer.zero_grad()
         
-        outputs = model(images)
+        outputs, _ = model(images)
         loss = criterion(outputs, targets)
 
         if log_step:
@@ -129,7 +129,7 @@ def validate_epoch(model, dataloader, criterion, device):
             images = images.to(device)
             targets = targets.to(device)
             
-            outputs = model(images)
+            outputs, _ = model(images)
             loss = criterion(outputs, targets)
             loss = torch.stack(loss, dim=0).sum()
 
@@ -157,7 +157,7 @@ def train(config_path, ckpt_path=None) -> None:
     
     # Get model
     model = build_METER_model(device, arch_type=config['model']['variant'])
-
+    model = torch.nn.DataParallel(model)
     os.makedirs(config['logging']['checkpoint_dir'], exist_ok=True)
     shutil.copy(config_path, os.path.join(config['logging']['checkpoint_dir'], 'config.yaml'))
 

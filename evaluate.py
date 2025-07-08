@@ -6,19 +6,16 @@ import time
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import yaml
 from torch.utils.data import DataLoader
-from torchvision import transforms
-from torchvision.datasets import VisionDataset
-from torchvision.transforms import v2 as t
 from tqdm import tqdm
 
 from architecture import build_METER_model
 from data import NYUDataset
 from loss import balanced_loss_function
 from metrics import REL, RMSE, delta
-from torch.profiler import profile, record_function, ProfilerActivity
 
 
 def load_config(config_path):
@@ -205,7 +202,7 @@ def main():
     dataloader = DataLoader(dataset, 1)
 
     model = build_METER_model(device, arch_type=config["model"]["variant"])
-    model = nn.DataParallel(model)
+    # model = nn.DataParallel(model)
     model = model.to(device, dtype=dtype)
 
     load_checkpoint(model, checkpoint_path)
@@ -218,7 +215,7 @@ def main():
     
     counts = [m.shape[1] for m in fmaps]
 
-    R, fmap = compute_dataset_response_batch_resistant(
+    R = compute_dataset_response_batch_resistant(
         model, counts, dataloader, device, config["training"]["n_of_bins"]
     )
 
