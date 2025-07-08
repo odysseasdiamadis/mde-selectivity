@@ -157,7 +157,8 @@ def train(config_path, ckpt_path=None) -> None:
     
     # Get model
     model = build_METER_model(device, arch_type=config['model']['variant'])
-    model = torch.nn.DataParallel(model)
+    model = torch.nn.DataParallel(model, device_ids=[0, torch.cuda.device_count()])
+    print(f"WORKING WITH {torch.cuda.device_count()} devices")
     os.makedirs(config['logging']['checkpoint_dir'], exist_ok=True)
     shutil.copy(config_path, os.path.join(config['logging']['checkpoint_dir'], 'config.yaml'))
 
