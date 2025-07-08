@@ -36,7 +36,7 @@ class NYUDataset(VisionDataset):
         self.test = test
         self.dtype = dtype
         self.rgb_transform = t.Compose(
-            [t.Resize((192, 256)), t.ToImage(), t.ToDtype(dtype)]
+            [t.Resize((192, 256)), t.ToImage(), t.ToDtype(dtype, scale=True)]
         )
         self.depth_transform = t.Compose([t.Resize((48, 64)), Depth2Tensor()])
         if test:
