@@ -7,9 +7,9 @@ training:
   learning_rate: 0.001
   num_epochs: 60
   log_step_loss: True
-  selectivity: false
+  selectivity: true
   lambda: 10 # selecitivty factor, about 1% of max depth
-  n_of_bins: 64 # bins for selectivity
+  n_of_bins: 16 # bins for selectivity
 
 data:
   root: "data/nyu_data/data"
