@@ -190,7 +190,7 @@ def train(config_path, ckpt_file=None) -> None:
     # Get model
     model = build_METER_model(device, arch_type=config["model"]["variant"])
 
-    model = torch.nn.DataParallel(model, list(range(torch.cuda.device_count())))
+    model = torch.nn.DataParallel(model)
     model = model.to(device)
     use_selectivity = config['training']['selectivity']
     if use_selectivity:
