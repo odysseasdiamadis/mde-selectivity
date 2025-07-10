@@ -169,14 +169,14 @@ def evaluate(model: nn.Module, dataloader, criterion, device):
             batch_size = images.size(0)
             total_samples += batch_size
 
-    return metrics, fmaps
+    return metrics, fmaps #type: ignore
 
 
 def main():
     dtype = torch.float32
     config_path = "config.yaml"
     if len(sys.argv) < 3:
-        print("USAGE: ", sys.argv[0], " pconfig.yaml] [checkpoint path]")
+        print("USAGE: ", sys.argv[0], " [config.yaml] [checkpoint path]")
 
     config_path = sys.argv[1]
     checkpoint_path = sys.argv[2]
@@ -194,29 +194,35 @@ def main():
         logging.info("Using CPU")
 
     # rescale_0_80 = transforms.Lambda(lambda (raw, depth): (raw, depth * 80))
-    dataset = NYUDataset(
+    test_ds = NYUDataset(
         root=config["data"]["root"],
         test=True,
     )
 
-    dataloader = DataLoader(dataset, 1)
+    train_ds = NYUDataset(
+        root=config["data"]["root"],
+        test=False,
+    )
+
+    test_dl = DataLoader(test_ds, 128)
+    train_dl = DataLoader(train_ds, 128)
 
     model = build_METER_model(device, arch_type=config["model"]["variant"])
-    # model = nn.DataParallel(model)
+    model = nn.DataParallel(model)
     model = model.to(device, dtype=dtype)
 
     load_checkpoint(model, checkpoint_path)
     metrics, fmaps = evaluate(
         model,
-        dataloader,
+        test_dl,
         criterion=balanced_loss_function(device, dtype=dtype).to(device, dtype),
         device=device,
     )
-    
+
     counts = [m.shape[1] for m in fmaps]
 
     R = compute_dataset_response_batch_resistant(
-        model, counts, dataloader, device, config["training"]["n_of_bins"]
+        model, counts, train_dl, device, config["training"]["n_of_bins"]
     )
 
     S = compute_selectivity(R, counts, eps=1e-6)
@@ -225,7 +231,7 @@ def main():
     for i in range(S.shape[0]):
         for j in range(S.shape[0]):
             df[f"S_{i}_{j}"] = S[i, j].item()
-    df.to_csv("./metrics.csv", float_format="%.6f")
+    df.to_csv(f"./metrics_{config['logging']['experiment_name']}.csv", float_format="%.6f")
     print(df.to_string(float_format="{:,.6f}".format))
 
 

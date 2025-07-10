@@ -220,27 +220,33 @@ class MobileViT(nn.Module):
     def forward(self, x):
         fmaps = []
         y0 = self.conv1(x)
+        fmaps.append(y0)
         x = self.mv2[0](y0)
         fmaps.append(x)
 
         y1 = self.mv2[1](x)
+        fmaps.append(y1)
         x = self.mv2[2](y1)
         fmaps.append(x)
         x = self.mv2[3](x)  # Repeat
         fmaps.append(x)
 
         y2 = self.mv2[4](x)
+        fmaps.append(x)
         x = self.mvit[0](y2)
         fmaps.append(x)
 
         y3 = self.mv2[5](x)
         fmaps.append(x)
         x = self.mvit[1](y3)
+        fmaps.append(x)
 
         x = self.mv2[6](x)
         fmaps.append(x)
         x = self.mvit[2](x)
+        fmaps.append(x)
         x = self.conv2(x)
+        fmaps.append(x)
 
         return x, [y0, y1, y2, y3], fmaps
 

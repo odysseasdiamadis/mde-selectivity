@@ -5,9 +5,9 @@ MAX = 1000.0
 _eps = 1e-4
 
 def RMSE(pred: Tensor, target: Tensor) -> Tensor:
-    mask = (target > 0) & (target < MAX)
-    diff2  = (pred[mask] - target[mask])**2
-    mse    = diff2.view(pred.shape).mean(dim=(-1, -2))
+    mask = ((target > 0) & (target < MAX)).float()
+    diff2  = ((pred - target)**2) * mask
+    mse    = diff2.view(pred.shape).mean(dim=(-2, -1))
     return torch.sqrt(input=mse).mean()
 
 def REL(pred: Tensor, target: Tensor) -> Tensor:

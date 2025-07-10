@@ -149,7 +149,7 @@ class L_assign(nn.Module):
         super().__init__()
         self.lambda_ = lambda_
         self.device = device
-        self.response_compute = response_compute
+        self.response_compute: ResponseCompute = response_compute
 
     def forward(
         self,
@@ -159,15 +159,8 @@ class L_assign(nn.Module):
         fmaps,
         device="cuda",
     ) -> torch.Tensor:
-        """
-        R: Tensor of shape [L, K_max, D] containing average responses R_{l,k,d}
-        channel_counts: list of length L, where channel_counts[l] = K_l (#units in layer l)
-        λ: weighting hyperparameter
-
-        Returns: scalar loss L_assign
-        """
         self.channel_counts = [fmap.shape[1] for fmap in fmaps]
-        R = self.response_compute(model, batch, fmaps)
+        R = self.response_compute(batch, fmaps)
         L, Kmax, D = R.shape
 
         # Precompute tensors for vectorization
@@ -209,19 +202,14 @@ class L_assign(nn.Module):
 
 class ResponseCompute(nn.Module):
     def __init__(
-        self, model: nn.Module, device: torch.device, config, n_of_bins: int = 10
+        self, model: nn.Module, device: torch.device, n_of_bins: int
     ):
         super().__init__()
         self.model = model.to(device)
         self.device = device
         self.D = n_of_bins
 
-        # 2) Allocate accumulators
-        #    total_response[l, k, d]: sum of activations for layer l, unit k, bin d
-        #    mask_count[d]: total # of pixels falling in bin d (shared)
-        self.mask_count = torch.zeros(self.D, device=device)
-
-    def forward(self, model: nn.Module, batch, fmap_list) -> torch.Tensor:
+    def forward(self, batch, fmap_list) -> torch.Tensor:
         imgs, depths = batch
         imgs = imgs.to(self.device)
         depths = depths.to(self.device).squeeze(1)  # → (B, H, W)
@@ -230,7 +218,7 @@ class ResponseCompute(nn.Module):
 
         edges = torch.linspace(0, 1000, steps=self.D + 1, device=self.device)  # (D+1,)
 
-        flat_depths = depths.reshape(-1)
+        flat_depths = depths.reshape(-1) # [B*H*W] <-- wrong?
         bin_idx = torch.bucketize(flat_depths, edges, right=True) - 1
         # clamp to [0,D-1]
         bin_idx = bin_idx.clamp(0, self.D - 1)  # → (B*H*W,)
@@ -244,12 +232,12 @@ class ResponseCompute(nn.Module):
 
         for layer_idx, fmap in enumerate(fmap_list):
             # fmap: (B, C, H, W) → (C, B*H*W)
-            fmap = F.interpolate(
+            A = F.interpolate(
                 fmap, size=depths.shape[-2:], mode="bilinear", align_corners=False
             )
 
-            C = fmap.shape[1]
-            flat_f = fmap.reshape(fmap.shape[0], C, -1).permute(1, 0, 2)
+            C = A.shape[1]
+            flat_f = A.reshape(A.shape[0], C, -1).permute(1, 0, 2)
             flat_f = flat_f.reshape(C, -1)  # (C, B*H*W)
 
             # scatter‐sum across the pixels into depth‐bins:

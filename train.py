@@ -194,7 +194,7 @@ def train(config_path, ckpt_file=None) -> None:
     model = model.to(device)
     use_selectivity = config['training']['selectivity']
     if use_selectivity:
-        resp_compute = ResponseCompute(model, device=device, config=config, n_of_bins=config['training']['n_of_bins'])
+        resp_compute = ResponseCompute(model, device=device, n_of_bins=config['training']['n_of_bins'])
         l_assign = L_assign(resp_compute, config["training"]["lambda"], device)
     else:
         l_assign = None # placeholder for LSPs
