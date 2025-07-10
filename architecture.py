@@ -278,7 +278,7 @@ class UpSample_layer(nn.Module):
         self.flag = flag
         self.name = name
         self.conv2d_transpose = nn.ConvTranspose2d(inp, oup, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1),
-                                                   dilation=1, output_padding=(1, 1), bias=False)
+                                                   dilation=1, output_padding=(1, 1), bias=False, device=device)
         self.end_up_layer = nn.Sequential(
             SeparableConv2d(sep_conv_filters, oup, kernel_size=(3, 3), device=device),
             nn.ReLU()
