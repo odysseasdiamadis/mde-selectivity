@@ -29,7 +29,7 @@ def conv_1x1_bn(inp, oup):
     )
 
 
-def conv_nxn_bn(inp, oup, kernal_size=3, stride=1, device='cuda:0'):
+def conv_nxn_bn(inp, oup, kernal_size=3, stride=1, device='cpu'):
     return nn.Sequential(
         SeparableConv2d(in_channels=inp, out_channels=oup, kernel_size=kernal_size, stride=stride,
                         bias=False, device=device),
@@ -188,7 +188,7 @@ class MobileViTBlock(nn.Module):
 
 
 class MobileViT(nn.Module):
-    def __init__(self, image_size, dims, channels, expansion=4, kernel_size=3, patch_size=(2, 2), device='cuda:0'):
+    def __init__(self, image_size, dims, channels, expansion=4, kernel_size=3, patch_size=(2, 2), device='cpu'):
         super().__init__()
         ih, iw = image_size
         ph, pw = patch_size

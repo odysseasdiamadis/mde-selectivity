@@ -207,7 +207,7 @@ def train(config_path, ckpt_file=None) -> None:
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
     criterion = balanced_loss_function(device, dtype=dtype)
     model = model.to(device=device, dtype=dtype)
-    criterion = criterion.to(device="cuda", dtype=dtype)
+    criterion = criterion.to(device=device, dtype=dtype)
     saved_epoch, saved_loss = 0, 0
 
     if ckpt_file:
@@ -223,7 +223,7 @@ def train(config_path, ckpt_file=None) -> None:
         test=False,
     )
 
-    pin_memory = device == "cuda"
+    pin_memory = device.type == "cuda"
     train_ds, val_ds = torch.utils.data.random_split(
         dataset, config["data"]["train_val_split"]
     )
