@@ -29,10 +29,10 @@ def conv_1x1_bn(inp, oup):
     )
 
 
-def conv_nxn_bn(inp, oup, kernal_size=3, stride=1):
+def conv_nxn_bn(inp, oup, kernal_size=3, stride=1, device='cuda:0'):
     return nn.Sequential(
         SeparableConv2d(in_channels=inp, out_channels=oup, kernel_size=kernal_size, stride=stride,
-                        bias=False, device='cuda:0'),
+                        bias=False, device=device),
         nn.BatchNorm2d(oup),
         nn.ReLU()
     )
@@ -153,18 +153,18 @@ class MV2Block(nn.Module):
 
 
 class MobileViTBlock(nn.Module):
-    def __init__(self, dim, depth, channel, kernel_size, patch_size, mlp_dim, dropout=0.):
+    def __init__(self, dim, depth, channel, kernel_size, patch_size, mlp_dim, dropout=0., device='cuda:0'):
         super().__init__()
         self.out_channels = channel
         self.ph, self.pw = patch_size
 
-        self.conv1 = conv_nxn_bn(channel, channel, kernel_size)
+        self.conv1 = conv_nxn_bn(channel, channel, kernel_size, device=device)
         self.conv2 = conv_1x1_bn(channel, dim)
 
         self.transformer = Transformer(dim, depth, 4, 8, mlp_dim, dropout) 
 
         self.conv3 = conv_1x1_bn(dim, channel)
-        self.conv4 = conv_nxn_bn(2 * channel, channel, kernel_size)
+        self.conv4 = conv_nxn_bn(2 * channel, channel, kernel_size, device=device)
 
     def forward(self, x):
         y = x.clone()
@@ -188,7 +188,7 @@ class MobileViTBlock(nn.Module):
 
 
 class MobileViT(nn.Module):
-    def __init__(self, image_size, dims, channels, expansion=4, kernel_size=3, patch_size=(2, 2)):
+    def __init__(self, image_size, dims, channels, expansion=4, kernel_size=3, patch_size=(2, 2), device='cuda:0'):
         super().__init__()
         ih, iw = image_size
         ph, pw = patch_size
@@ -210,9 +210,9 @@ class MobileViT(nn.Module):
         self.mv2.append(MV2Block(channels[7], channels[8], 2, expansion))
 
         self.mvit = nn.ModuleList([])
-        self.mvit.append(MobileViTBlock(dims[0], L[0], channels[5], kernel_size, patch_size, int(dims[0] * 2)))
-        self.mvit.append(MobileViTBlock(dims[1], L[1], channels[7], kernel_size, patch_size, int(dims[1] * 4)))
-        self.mvit.append(MobileViTBlock(dims[2], L[2], channels[9], kernel_size, patch_size, int(dims[2] * 4)))
+        self.mvit.append(MobileViTBlock(dims[0], L[0], channels[5], kernel_size, patch_size, int(dims[0] * 2), device=device))
+        self.mvit.append(MobileViTBlock(dims[1], L[1], channels[7], kernel_size, patch_size, int(dims[1] * 4), device=device))
+        self.mvit.append(MobileViTBlock(dims[2], L[2], channels[9], kernel_size, patch_size, int(dims[2] * 4), device=device))
 
         self.conv2 = conv_1x1_bn(channels[-2], channels[-1])
 
@@ -251,25 +251,25 @@ class MobileViT(nn.Module):
         return x, [y0, y1, y2, y3], fmaps
 
 
-def mobilevit_xxs():
+def mobilevit_xxs(device):
     enc_type = 'xxs'
     dims = [64, 80, 96]
     channels = [16, 16, 24, 24, 48, 48, 64, 64, 80, 80, 160]  # 320
-    return MobileViT((RGB_img_res[1], RGB_img_res[2]), dims, channels, expansion=2), enc_type
+    return MobileViT((RGB_img_res[1], RGB_img_res[2]), dims, channels, expansion=2, device=device), enc_type
 
 
-def mobilevit_xs():
+def mobilevit_xs(device):
     enc_type = 'xs'
     dims = [96, 120, 144]
     channels = [16, 32, 48, 48, 64, 64, 80, 80, 96, 96, 192] # 384
-    return MobileViT((RGB_img_res[1], RGB_img_res[2]), dims, channels), enc_type
+    return MobileViT((RGB_img_res[1], RGB_img_res[2]), dims, channels, device=device), enc_type
 
 
-def mobilevit_s():
+def mobilevit_s(device):
     enc_type = 's'
     dims = [144, 192, 240]
     channels = [16, 32, 64, 64, 96, 96, 128, 128, 160, 160, 320]
-    return MobileViT((RGB_img_res[1], RGB_img_res[2]), dims, channels), enc_type
+    return MobileViT((RGB_img_res[1], RGB_img_res[2]), dims, channels, device=device), enc_type
 
 
 class UpSample_layer(nn.Module):
@@ -334,11 +334,11 @@ class build_METER_model(nn.Module):
     def __init__(self, device, arch_type):
         super(build_METER_model, self).__init__()
         if arch_type == 's':
-            self.encoder, enc_type = mobilevit_s()
+            self.encoder, enc_type = mobilevit_s(device)
         elif arch_type == 'xs':
-            self.encoder, enc_type = mobilevit_xs()
+            self.encoder, enc_type = mobilevit_xs(device)
         else:
-            self.encoder, enc_type = mobilevit_xxs()
+            self.encoder, enc_type = mobilevit_xxs(device)
         self.decoder = decoder(device=device, typ=enc_type)
 
     def forward(self, x):
