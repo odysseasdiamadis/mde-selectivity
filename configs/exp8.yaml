@@ -1,6 +1,6 @@
 model:
   name: "METER"
-  variant: "xxs"  # xxs, xs, s
+  variant: "xs"  # xxs, xs, s
 
 training:
   batch_size: 64
