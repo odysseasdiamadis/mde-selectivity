@@ -144,12 +144,17 @@ class balanced_loss_function(nn.Module):
 
 class L_assign(nn.Module):
     def __init__(
-        self, response_compute: "ResponseCompute", lambda_: float, device: torch.device
+        self,
+        response_compute: "ResponseCompute",
+        lambda_: float,
+        device: torch.device,
+        assign_formula=None,
     ):
         super().__init__()
         self.lambda_ = lambda_
         self.device = device
         self.response_compute: ResponseCompute = response_compute
+        self.assign_formula = assign_formula or "original"
 
     def forward(
         self,
@@ -168,11 +173,11 @@ class L_assign(nn.Module):
         ks = torch.arange(Kmax, device=R.device).unsqueeze(0)  # [1, Kmax]
         channel_counts_t = torch.tensor(self.channel_counts, device=R.device)  # [L]
 
-        # 1. Compute bin assignments (Eq.6) for all layers/units
-        n_b = torch.minimum(channel_counts_t, torch.tensor(D, device=R.device))  # [L]
-        d_k = (ks[:, :Kmax] * n_b.unsqueeze(1)) // channel_counts_t.unsqueeze(
-            1
-        )  # [L, Kmax]
+        D_t = torch.tensor(D, device=R.device)
+        # if self.assign_formula == "original":
+        n_b = torch.minimum(channel_counts_t, D_t)  # [L]
+        d_k = (ks[:, :Kmax] * n_b.unsqueeze(1)) // channel_counts_t.unsqueeze(1)  # [L, Kmax]
+
         d_k = torch.clamp(d_k.long(), 0, D - 1)  # Ensure valid bin indices
 
         # 2. Gather responses at assigned bins
@@ -201,9 +206,7 @@ class L_assign(nn.Module):
 
 
 class ResponseCompute(nn.Module):
-    def __init__(
-        self, model: nn.Module, device: torch.device, n_of_bins: int
-    ):
+    def __init__(self, model: nn.Module, device: torch.device, n_of_bins: int):
         super().__init__()
         self.model = model.to(device)
         self.device = device
@@ -218,7 +221,7 @@ class ResponseCompute(nn.Module):
 
         edges = torch.linspace(0, 1000, steps=self.D + 1, device=self.device)  # (D+1,)
 
-        flat_depths = depths.reshape(-1) # [B*H*W] <-- wrong?
+        flat_depths = depths.reshape(-1)  # [B*H*W] <-- wrong?
         bin_idx = torch.bucketize(flat_depths, edges, right=True) - 1
         # clamp to [0,D-1]
         bin_idx = bin_idx.clamp(0, self.D - 1)  # → (B*H*W,)

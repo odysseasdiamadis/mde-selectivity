@@ -15,6 +15,38 @@ from loss import L_assign, ResponseCompute, balanced_loss_function
 
 torch.manual_seed(42)
 
+import numpy as np
+import torch
+
+class EarlyStopping:
+    def __init__(self, patience=5, verbose=False, delta=0.0):
+        self.patience = patience
+        self.verbose = verbose
+        self.delta = delta
+        
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+        self.val_loss_min = torch.inf
+
+    def __call__(self, val_loss):
+        score = -val_loss  # Since we want to minimize loss
+
+        if self.best_score is None:
+            self.best_score = score
+        
+        elif score < self.best_score + self.delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        
+        else:
+            self.best_score = score
+            self.counter = 0
+        return False
+
+
+
 def load_config(config_path):
     """Load configuration from YAML file."""
     with open(config_path, "r") as file:
@@ -33,6 +65,12 @@ def setup_logging(log_dir):
             logging.StreamHandler(),
         ],
     )
+
+def get_scheduler(config, optim: torch.optim.Optimizer):
+    opt_conf = config['training'].get('optimizer')
+    if opt_conf is None:
+        return torch.optim.lr_scheduler.StepLR(optim, 20)
+    return torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', threshold=0.1, patience=5)
 
 
 def save_checkpoint(
@@ -61,7 +99,7 @@ def save_checkpoint(
     logging.info(f"Checkpoint saved: {checkpoint_path}")
 
 
-def load_checkpoint(model, optimizer, scheduler, checkpoint_path):
+def load_checkpoint(model, optimizer, scheduler, checkpoint_path, device):
     """Load model checkpoint."""
     checkpoint = torch.load(checkpoint_path)
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -82,7 +120,7 @@ def train_epoch(
 ):
     """Train for one epoch."""
     model.train()
-    use_selectivity = config['training']['selectivity']
+    use_selectivity = config["training"]["selectivity"]
 
     epoch_total_loss = torch.tensor([0.0], device=device)
     epoch_total_selectivity_loss = torch.tensor([0.0], device=device)
@@ -118,7 +156,7 @@ def train_epoch(
             loss_assign = l_assign(model, (images, targets), fmaps)
         else:
             loss_assign = torch.tensor(0.0, device=device)
-        
+
         loss = loss_base + loss_assign
         loss.backward()
         optimizer.step()
@@ -171,12 +209,11 @@ def train(config_path, ckpt_file=None) -> None:
     config = load_config(config_path)
     dtype = torch.float32
     # Setup logging
-    exp_name = config['logging']['experiment_name']
-    ckpt_dir = os.path.join(exp_name, 'checkpoints')
-    log_dir = os.path.join(exp_name, 'logs')
+    exp_name = config["logging"]["experiment_name"]
+    ckpt_dir = os.path.join("experiments", exp_name, "checkpoints")
+    log_dir = os.path.join("experiments", exp_name, "logs")
 
     setup_logging(log_dir)
-    logging.info("Starting training...")
     logging.info(f"Configuration: {config}")
 
     # Setup device
@@ -190,21 +227,30 @@ def train(config_path, ckpt_file=None) -> None:
     # Get model
     model = build_METER_model(device, arch_type=config["model"]["variant"])
 
-    model = torch.nn.DataParallel(model, device_ids=[config['device']['device_id']])
+    model = torch.nn.DataParallel(model, device_ids=[config["device"]["device_id"]])
     model = model.to(device)
-    use_selectivity = config['training']['selectivity']
+    use_selectivity = config["training"]["selectivity"]
     if use_selectivity:
-        resp_compute = ResponseCompute(model, device=device, n_of_bins=config['training']['n_of_bins'])
-        l_assign = L_assign(resp_compute, config["training"]["lambda"], device)
+        resp_compute = ResponseCompute(
+            model, device=device, n_of_bins=config["training"]["n_of_bins"]
+        )
+        l_assign = L_assign(
+            resp_compute,
+            config["training"]["lambda"],
+            device,
+            assign_formula=config["training"].get("formula"),
+        )
     else:
-        l_assign = None # placeholder for LSPs
+        l_assign = None  # placeholder for LSPs
 
     optimizer = optim.AdamW(
         model.parameters(),
         lr=config["training"]["learning_rate"],
         weight_decay=config["training"].get("weight_decay") or 0.01,
     )
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20)
+    scheduler = get_scheduler(config, optimizer)
+
     criterion = balanced_loss_function(device, dtype=dtype)
     model = model.to(device=device, dtype=dtype)
     criterion = criterion.to(device=device, dtype=dtype)
@@ -216,6 +262,7 @@ def train(config_path, ckpt_file=None) -> None:
             optimizer=optimizer,
             scheduler=scheduler,
             checkpoint_path=ckpt_file,
+            device=device,
         )
 
     dataset = NYUDataset(
@@ -244,6 +291,7 @@ def train(config_path, ckpt_file=None) -> None:
     best_val_loss = float("inf")
     losses = []
 
+    early_stop = EarlyStopping(20, delta=0.1)
     for epoch in range(saved_epoch, config["training"]["num_epochs"]):
         logging.info(f"Epoch {epoch+1}/{config['training']['num_epochs']}")
 
@@ -261,8 +309,14 @@ def train(config_path, ckpt_file=None) -> None:
         # Validate
         val_loss = validate_epoch(model, val_loader, criterion, device)
 
-        # Update scheduler
-        scheduler.step()
+        if early_stop(val_loss):
+            logging.info(f"Triggered early stopping at epoch {epoch+1}")
+            break
+
+        if isinstance(scheduler, torch.optim.lr_scheduler.StepLR):
+            scheduler.step()
+        elif isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(val_loss, epoch)
 
         # Log epoch results
         current_lr = optimizer.param_groups[0]["lr"]
@@ -270,7 +324,7 @@ def train(config_path, ckpt_file=None) -> None:
             f"Epoch {epoch+1} - Train Loss: {train_loss.item():.4f} ({loss_depth.item():.4f} + {loss_selectivity.item():.4f}), Val Loss: {val_loss.item():.4f}, LR: {current_lr:.6f}"
         )
         losses = losses + epoch_losses
-        # Save checkpoint
+
         is_best: bool = val_loss.item() < best_val_loss
         if is_best:
             best_val_loss: float = val_loss.item()
@@ -288,9 +342,7 @@ def train(config_path, ckpt_file=None) -> None:
 
     logging.info("Training completed!")
     logging.info(f"Best validation loss: {best_val_loss:.4f}")
-    pd.DataFrame(losses).to_csv(
-        os.path.join(log_dir, "./epoch_losses.csv")
-    )
+    pd.DataFrame(losses).to_csv(os.path.join(log_dir, "./epoch_losses.csv"))
 
 
 def main():

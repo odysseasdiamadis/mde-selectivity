@@ -38,8 +38,8 @@ def setup_logging(log_dir):
     )
 
 
-def load_checkpoint(model, checkpoint_path):
-    checkpoint = torch.load(checkpoint_path)
+def load_checkpoint(model, checkpoint_path, device):
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     if "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
@@ -211,7 +211,7 @@ def main():
     model = nn.DataParallel(model)
     model = model.to(device, dtype=dtype)
 
-    load_checkpoint(model, checkpoint_path)
+    load_checkpoint(model, checkpoint_path, device=device)
     metrics, fmaps = evaluate(
         model,
         test_dl,

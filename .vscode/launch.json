@@ -17,7 +17,7 @@
             "name": "Train Selectivity",
             "type": "debugpy",
             "request": "launch",
-            "program": "train_selectivity.py",
+            "program": "train.py",
             "justMyCode": false,
             "args": ["config.yaml"],
             "console": "integratedTerminal"
@@ -27,7 +27,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "evaluate.py",
-            "args": ["config.yaml", "exp1/checkpoints/best_model.pth"],
+            "args": ["configs/exp2.yaml", "experiments/exp2/checkpoints/best_model.pth"],
             "console": "internalConsole"
         }
     ]
