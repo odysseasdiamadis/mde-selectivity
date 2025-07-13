@@ -101,7 +101,7 @@ def save_checkpoint(
 
 def load_checkpoint(model, optimizer, scheduler, checkpoint_path, device):
     """Load model checkpoint."""
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
