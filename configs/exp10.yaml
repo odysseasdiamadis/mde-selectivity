@@ -26,4 +26,4 @@ device:
 logging:
   log_interval: 0 # steps -- 0 for no log
   save_interval: 5 # epochs
-  experiment_name: 'exp3'
+  experiment_name: 'exp10'
