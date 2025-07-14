@@ -3,14 +3,13 @@ model:
   variant: "xxs"  # xxs, xs, s
 
 training:
-  batch_size: 32
+  batch_size: 64
   learning_rate: 0.001
-  num_epochs: 120
+  num_epochs: 30
   log_step_loss: True
   selectivity: true
-  lambda: 100 # selecitivty factor, about 1% of max depth
+  lambda: 1 # selecitivty factor, about 1% of max depth
   n_of_bins: 64 # bins for selectivity
-  scheduler: reducelronplateau
 
 data:
   root: "data/nyu_data/data"
@@ -26,6 +25,6 @@ device:
 logging:
   log_interval: 0 # steps -- 0 for no log
   save_interval: 5 # epochs
-  experiment_name: 'exp7'
+  experiment_name: 'exp9'
   checkpoint_dir: "./checkpoints"
   log_dir: "./logs"
