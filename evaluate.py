@@ -48,31 +48,36 @@ def load_checkpoint(model, checkpoint_path, device):
     return model
 
 
+import torch
+import torch.nn.functional as F
+from tqdm import tqdm
+
+
+
 def compute_dataset_response_batch_resistant(
-    model, counts, loader, device, n_of_bins,
-    depth_min=0.0, depth_max=1000.0
+    model, counts, loader, device, n_of_bins, depth_min=0.0, depth_max=1000.0
 ):
-    D    = n_of_bins
-    L    = len(counts)
-    K_l  = counts
+    D = n_of_bins
+    L = len(counts)
+    K_l = counts
     Kmax = max(K_l)
 
     # fixed, global edges
-    edges = torch.linspace(depth_min, depth_max, D+1, device=device)
+    edges = torch.linspace(depth_min, depth_max, D + 1, device=device)
 
     sum_response = torch.zeros(L, Kmax, D, device=device)
-    count_bins   = torch.zeros(D, device=device)
+    count_bins = torch.zeros(D, device=device)
 
     model.eval()
     with torch.no_grad():
         for imgs, depths in loader:
-            imgs   = imgs.to(device)
+            imgs = imgs.to(device)
             depths = depths.to(device).squeeze(1)  # (B,H,W)
             B, H, W = depths.shape
 
             # bucketize with **fixed** edges
             bidx = torch.bucketize(depths.reshape(-1), edges, right=True) - 1
-            bidx = bidx.clamp(0, D-1)
+            bidx = bidx.clamp(0, D - 1)
             count_bins += torch.bincount(bidx, minlength=D).to(device)
 
             # forward + get your fmap_list (in same order as conv_modules)
@@ -81,9 +86,11 @@ def compute_dataset_response_batch_resistant(
             for i, fmap in enumerate(fmap_list):
                 C = fmap.shape[1]
                 # upsample to (H,W)
-                fmap_up = F.interpolate(fmap, size=(H,W), mode='bilinear', align_corners=False)
-                flat_f   = fmap_up.permute(1,0,2,3).reshape(C, -1)
-                summed   = torch.zeros(C, D, device=device)
+                fmap_up = F.interpolate(
+                    fmap, size=(H, W), mode="bilinear", align_corners=False
+                )
+                flat_f = fmap_up.permute(1, 0, 2, 3).reshape(C, -1)
+                summed = torch.zeros(C, D, device=device)
                 summed.scatter_reduce_(
                     1,
                     bidx.unsqueeze(0).expand(C, -1),
@@ -94,7 +101,7 @@ def compute_dataset_response_batch_resistant(
                 sum_response[i, :C, :] += summed
 
     # normalize
-    R = sum_response / count_bins.clamp(min=1e-6).view(1,1,D)
+    R = sum_response / count_bins.clamp(min=1e-6).view(1, 1, D)
     return R
 
 
@@ -169,7 +176,7 @@ def evaluate(model: nn.Module, dataloader, criterion, device):
             batch_size = images.size(0)
             total_samples += batch_size
 
-    return metrics, fmaps #type: ignore
+    return metrics, fmaps  # type: ignore
 
 
 def main():
@@ -207,7 +214,11 @@ def main():
     test_dl = DataLoader(test_ds, 128)
     train_dl = DataLoader(train_ds, 128)
 
-    model = build_METER_model(device, arch_type=config["model"]["variant"])
+    model = build_METER_model(
+        device,
+        arch_type=config["model"]["variant"],
+        fmap_decoder=config["training"].get("fmaps_decoder"),
+    )
     model = nn.DataParallel(model)
     model = model.to(device, dtype=dtype)
 
@@ -231,7 +242,9 @@ def main():
     for i in range(S.shape[0]):
         for j in range(S.shape[0]):
             df[f"S_{i}_{j}"] = S[i, j].item()
-    df.to_csv(f"./metrics_{config['logging']['experiment_name']}.csv", float_format="%.6f")
+    df.to_csv(
+        f"./metrics_{config['logging']['experiment_name']}.csv", float_format="%.6f"
+    )
     print(df.to_string(float_format="{:,.6f}".format))
 
 

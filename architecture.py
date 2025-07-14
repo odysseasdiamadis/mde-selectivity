@@ -322,17 +322,24 @@ class decoder(nn.Module):
                                     1, kernel_size=(3, 3), padding='same', bias=False)
 
     def forward(self, x, enc_layer_list):
+        fmaps = []
         x = self.conv2d_in(x)
         x = self.ups_block_1(x, enc_layer_list[3])
+        fmaps.append(x)
         x = self.ups_block_2(x, enc_layer_list[2])
+        fmaps.append(x)
         x = self.ups_block_3(x, enc_layer_list[1])
+        fmaps.append(x)
         x = self.conv2d_out(x)
-        return x
+        return x, fmaps
 
 
 class build_METER_model(nn.Module):
-    def __init__(self, device, arch_type):
+    def __init__(self, device, arch_type, fmap_decoder=False):
         super(build_METER_model, self).__init__()
+        if not fmap_decoder:
+            fmap_decoder = False
+        self.fmap_decoder = fmap_decoder
         if arch_type == 's':
             self.encoder, enc_type = mobilevit_s(device)
         elif arch_type == 'xs':
@@ -343,5 +350,7 @@ class build_METER_model(nn.Module):
 
     def forward(self, x):
         x, enc_layer, fmaps = self.encoder(x)
-        x = self.decoder(x, enc_layer)
+        x, fmaps_dec = self.decoder(x, enc_layer)
+        if self.fmap_decoder:
+            fmaps += fmaps_dec
         return x, fmaps

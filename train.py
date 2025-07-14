@@ -18,12 +18,13 @@ torch.manual_seed(42)
 import numpy as np
 import torch
 
+
 class EarlyStopping:
     def __init__(self, patience=5, verbose=False, delta=0.0):
         self.patience = patience
         self.verbose = verbose
         self.delta = delta
-        
+
         self.counter = 0
         self.best_score = None
         self.early_stop = False
@@ -34,17 +35,16 @@ class EarlyStopping:
 
         if self.best_score is None:
             self.best_score = score
-        
+
         elif score < self.best_score + self.delta:
             self.counter += 1
             if self.counter >= self.patience:
                 return True
-        
+
         else:
             self.best_score = score
             self.counter = 0
         return False
-
 
 
 def load_config(config_path):
@@ -66,11 +66,14 @@ def setup_logging(log_dir):
         ],
     )
 
+
 def get_scheduler(config, optim: torch.optim.Optimizer):
-    opt_conf = config['training'].get('optimizer')
+    opt_conf = config["training"].get("optimizer")
     if opt_conf is None:
         return torch.optim.lr_scheduler.StepLR(optim, 20)
-    return torch.optim.lr_scheduler.ReduceLROnPlateau(optim, mode='min', threshold=0.1, patience=5)
+    return torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optim, mode="min", threshold=0.1, patience=5
+    )
 
 
 def save_checkpoint(
@@ -225,7 +228,11 @@ def train(config_path, ckpt_file=None) -> None:
         logging.info("Using CPU")
 
     # Get model
-    model = build_METER_model(device, arch_type=config["model"]["variant"])
+    model = build_METER_model(
+        device,
+        arch_type=config["model"]["variant"],
+        fmap_decoder=config["training"].get("fmaps_decoder"),
+    )
 
     model = torch.nn.DataParallel(model, device_ids=[config["device"]["device_id"]])
     model = model.to(device)
