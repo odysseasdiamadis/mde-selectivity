@@ -53,7 +53,6 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 
-
 def compute_dataset_response_batch_resistant(
     model, counts, loader, device, n_of_bins, depth_min=0.0, depth_max=1000.0
 ):
@@ -179,14 +178,35 @@ def evaluate(model: nn.Module, dataloader, criterion, device):
     return metrics, fmaps  # type: ignore
 
 
+def build_eval_df(exp_name, dataloader, model, device, dtype, include_config=False):
+    config = load_config(f"configs/{exp_name}.yaml")
+    checkpoint_path = os.path.join(
+        "experiments", exp_name, "checkpoints", "best_model.pth"
+    )
+    load_checkpoint(model, checkpoint_path, device=device)
+    metrics, fmaps = evaluate(
+        model,
+        dataloader,
+        criterion=balanced_loss_function(device, dtype=dtype).to(device, dtype),
+        device=device,
+    )
+    df = pd.DataFrame(metrics).mean().to_dict()
+    if include_config:
+        train_conf = config["training"]
+        df["lambda"] = train_conf.get("lambda", "")
+        df["n_of_bins"] = train_conf.get("n_of_bins", "")
+        df["fmaps_decoder"] = train_conf.get("fmaps_decoder", "")
+    df["exp_name"] = exp_name
+    return df
+
+
 def main():
     dtype = torch.float32
     config_path = "config.yaml"
     if len(sys.argv) < 3:
-        print("USAGE: ", sys.argv[0], " [config.yaml] [checkpoint path]")
+        print("USAGE: ", sys.argv[0], " --exp-list exp1,exp2...")
 
-    config_path = sys.argv[1]
-    checkpoint_path = sys.argv[2]
+    exp_list = sys.argv[2].split(",")
 
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -200,19 +220,12 @@ def main():
         device = torch.device("cpu")
         logging.info("Using CPU")
 
-    # rescale_0_80 = transforms.Lambda(lambda (raw, depth): (raw, depth * 80))
     test_ds = NYUDataset(
         root=config["data"]["root"],
         test=True,
     )
 
-    train_ds = NYUDataset(
-        root=config["data"]["root"],
-        test=False,
-    )
-
     test_dl = DataLoader(test_ds, 128)
-    train_dl = DataLoader(train_ds, 128)
 
     model = build_METER_model(
         device,
@@ -222,30 +235,11 @@ def main():
     model = nn.DataParallel(model)
     model = model.to(device, dtype=dtype)
 
-    load_checkpoint(model, checkpoint_path, device=device)
-    metrics, fmaps = evaluate(
-        model,
-        test_dl,
-        criterion=balanced_loss_function(device, dtype=dtype).to(device, dtype),
-        device=device,
-    )
+    evals = {exp: build_eval_df(exp, test_dl, model, device, dtype) for exp in exp_list}
 
-    counts = [m.shape[1] for m in fmaps]
+    df = pd.DataFrame.from_dict(evals)
 
-    R = compute_dataset_response_batch_resistant(
-        model, counts, train_dl, device, config["training"]["n_of_bins"]
-    )
-
-    S = compute_selectivity(R, counts, eps=1e-6)
-
-    df = pd.DataFrame(metrics).mean()
-    for i in range(S.shape[0]):
-        for j in range(S.shape[0]):
-            df[f"S_{i}_{j}"] = S[i, j].item()
-    df.to_csv(
-        f"./metrics_{config['logging']['experiment_name']}.csv", float_format="%.6f"
-    )
-    print(df.to_string(float_format="{:,.6f}".format))
+    df.to_csv(f"./metrics_experiments.csv", float_format="{:,.4f}".format)
 
 
 if __name__ == "__main__":

@@ -158,46 +158,35 @@ class L_assign(nn.Module):
 
     def forward(
         self,
-        #  R: torch.Tensor,
-        model,
         batch,
         fmaps,
-        device="cuda",
     ) -> torch.Tensor:
         self.channel_counts = [fmap.shape[1] for fmap in fmaps]
         R = self.response_compute(batch, fmaps)
         L, Kmax, D = R.shape
 
-        # Precompute tensors for vectorization
-
         ks = torch.arange(Kmax, device=R.device).unsqueeze(0)  # [1, Kmax]
         channel_counts_t = torch.tensor(self.channel_counts, device=R.device)  # [L]
 
         D_t = torch.tensor(D, device=R.device)
-        # if self.assign_formula == "original":
         n_b = torch.minimum(channel_counts_t, D_t)  # [L]
         d_k = (ks[:, :Kmax] * n_b.unsqueeze(1)) // channel_counts_t.unsqueeze(1)  # [L, Kmax]
 
         d_k = torch.clamp(d_k.long(), 0, D - 1)  # Ensure valid bin indices
 
-        # 2. Gather responses at assigned bins
         l_indices = torch.arange(L, device=R.device).unsqueeze(1)  # [L, 1]
         k_indices = ks.expand(L, Kmax)  # [L, Kmax]
         R_dk = R[l_indices, k_indices, d_k]  # [L, Kmax]
 
-        # 3. Compute average of other bins
         R_sum = R.sum(dim=2)  # [L, Kmax]
         R_minus = (R_sum - R_dk) / (D - 1)  # [L, Kmax]
 
-        # 4. Compute selectivity scores (Eq.5)
         abs_R_dk = R_dk.abs()
         abs_R_minus = R_minus.abs()
         s_k = (abs_R_dk - abs_R_minus) / (abs_R_dk + abs_R_minus + 1e-6)  # [L, Kmax]
 
-        # 5. Create mask for valid units
         valid_mask = ks < channel_counts_t.unsqueeze(1)  # [L, Kmax]
 
-        # 6. Compute loss (Eq.5 scaled)
         total_s_k = (s_k * valid_mask).sum()  # Only sum valid units
         total_units = channel_counts_t.sum()
         L_assign = -self.lambda_ * (total_s_k / total_units)
@@ -223,18 +212,13 @@ class ResponseCompute(nn.Module):
 
         flat_depths = depths.reshape(-1)  # [B*H*W] <-- wrong?
         bin_idx = torch.bucketize(flat_depths, edges, right=True) - 1
-        # clamp to [0,D-1]
         bin_idx = bin_idx.clamp(0, self.D - 1)  # → (B*H*W,)
 
-        # 4) for each layer, do one scatter‐reduce over the pixel dimension
         R = torch.zeros(len(fmap_list), self.K, self.D, device=self.device)
         counts = torch.zeros(self.D, device=self.device)
-
-        # We'll also build a global count vector in one go:
         counts = torch.bincount(bin_idx, minlength=self.D)  # → (D,)
 
         for layer_idx, fmap in enumerate(fmap_list):
-            # fmap: (B, C, H, W) → (C, B*H*W)
             A = F.interpolate(
                 fmap, size=depths.shape[-2:], mode="bilinear", align_corners=False
             )
@@ -243,10 +227,8 @@ class ResponseCompute(nn.Module):
             flat_f = A.reshape(A.shape[0], C, -1).permute(1, 0, 2)
             flat_f = flat_f.reshape(C, -1)  # (C, B*H*W)
 
-            # scatter‐sum across the pixels into depth‐bins:
-            #   out: (C, D)
             summed = torch.zeros(C, self.D, device=self.device)
-            # dim=1 because we scatter along the pixel axis
+
             summed.scatter_reduce_(
                 1,
                 bin_idx.unsqueeze(0).expand(C, -1),
@@ -255,10 +237,8 @@ class ResponseCompute(nn.Module):
                 include_self=False,
             )
 
-            # store (and optionally trim/pad if C < K)
             R[layer_idx, :C, :] = summed
 
-        # 5) divide out the counts (avoid div by zero)
         denom = counts.clamp(min=1e-6).view(1, 1, self.D)
         R = R / denom
 
