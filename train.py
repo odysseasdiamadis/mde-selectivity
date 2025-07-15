@@ -156,7 +156,7 @@ def train_epoch(
 
         loss_base = torch.stack(tensors=loss_base, dim=0).sum()
         if use_selectivity:
-            loss_assign = l_assign(model, (images, targets), fmaps)
+            loss_assign = l_assign((images, targets), fmaps)
         else:
             loss_assign = torch.tensor(0.0, device=device)
 
