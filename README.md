@@ -9,6 +9,9 @@ The dataset can be downloaded by running
 ./download_dataset.sh
 ```
 
+**Please note**: the config files are already set to pick the dataset from the output folder of the above script. By not changing the path in the
+configurations, training script will work correctly.
+
 All the existing configurations are already set to fetch the data from the right directory. Just run the script and the training (as described later).
 
 
@@ -36,7 +39,7 @@ docker run -u XXXX:XXXX \
 To run an evaluation you must run the `evaluate.py` script as follows:
 
 ```sh
-uv run evaluate.py --exp-list exp1,exp2,exp3
+uv run evaluate.py --exp-list exp1,exp3,exp10,exp11
 ```
 
 Or, if using docker:
@@ -49,7 +52,7 @@ docker run -u XXXX:XXXX \
     -e HOME=/workspace \
     -v $(pwd):/workspace \
     ghcr.io/astral-sh/uv:debian \
-    uv run evaluate.py --exp-list exp1,exp2,exp3
+    uv run evaluate.py --exp-list exp1,exp3,exp10,exp11
 ```
 By specifying the experiment name, the script will automatically pick the best checkpoint (in terms of validation loss)
 from the `experiments` folder. The repository includes the best checkpoints for experiments 1, 3, 10, 11.
