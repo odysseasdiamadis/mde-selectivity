@@ -54,6 +54,7 @@ docker run -u XXXX:XXXX \
     ghcr.io/astral-sh/uv:debian \
     uv run evaluate.py --exp-list exp1,exp3,exp10,exp11
 ```
+
 By specifying the experiment name, the script will automatically pick the best checkpoint (in terms of validation loss)
 from the `experiments` folder. The repository includes the best checkpoints for experiments 1, 3, 10, 11.
 In order to select a different one, you'll need to run the training specifyint the corresponding configuration file.

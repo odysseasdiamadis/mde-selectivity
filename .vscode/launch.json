@@ -27,7 +27,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "evaluate.py",
-            "args": ["configs/exp2.yaml", "experiments/exp2/checkpoints/best_model.pth"],
+            "args": ["--exp-list", "exp1,exp2,exp4"],
             "console": "internalConsole"
         }
     ]
