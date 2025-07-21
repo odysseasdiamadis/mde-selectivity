@@ -1,0 +1,29 @@
+model:
+  name: "METER"
+  variant: "xxs"  # xxs, xs, s
+
+training:
+  batch_size: 64
+  learning_rate: 0.001
+  num_epochs: 60
+  log_step_loss: True
+  selectivity: true
+  lambda: 0.1 # selecitivty factor, about 1% of max depth
+  n_of_bins: 32 # bins for selectivity
+  fmaps_decoder: True
+
+data:
+  root: "data/nyu_data/data"
+  split_files_folder: "./data_splits"
+  train_val_split: [0.9, 0.1]
+  num_workers: 12
+  shuffle: true
+
+device:
+  cuda: true
+  device_id: 0
+
+logging:
+  log_interval: 0 # steps -- 0 for no log
+  save_interval: 5 # epochs
+  experiment_name: 'exp14'
