@@ -173,7 +173,7 @@ class L_assign(nn.Module):
         response_compute: "ResponseCompute",
         lambda_: float,
         device: torch.device,
-        N_b: int,  # Number of depth bins (from paper)
+        N_b: int = 64,  # Number of depth bins (from paper)
         assign_formula=None,
     ):
         super().__init__()
@@ -203,24 +203,14 @@ class L_assign(nn.Module):
         # Ensure valid bin indices (should not exceed D-1)
         d_k = torch.clamp(d_k.long(), 0, D - 1)
 
-        # Extract responses for assigned bins
+        # Extract responses for assigned bins - VECTORIZED
         l_indices = torch.arange(L, device=R.device).unsqueeze(1)  # [L, 1]
         k_indices = ks.expand(L, Kmax)  # [L, Kmax]
         R_dk = R[l_indices, k_indices, d_k]  # [L, Kmax] - Response in assigned bin
 
-        # Calculate average response in all OTHER bins (excluding assigned bin)
-        # This requires more careful computation
-        R_minus_dk = torch.zeros_like(R_dk)
-        
-        for l in range(L):
-            for k in range(self.channel_counts[l]):
-                assigned_bin = d_k[l, k].item()
-                # Sum all responses except the assigned bin
-                other_responses = torch.cat([R[l, k, :assigned_bin], R[l, k, assigned_bin+1:]])
-                if len(other_responses) > 0:
-                    R_minus_dk[l, k] = other_responses.mean()
-                else:
-                    R_minus_dk[l, k] = 0.0
+        # VECTORIZED calculation of average response in all OTHER bins
+        R_sum = R.sum(dim=2)  # [L, Kmax] - Sum over all bins
+        R_minus_dk = (R_sum - R_dk) / (D - 1)  # [L, Kmax] - Average of other bins
 
         # Calculate selectivity scores as per equation (5)
         abs_R_dk = R_dk.abs()
@@ -230,14 +220,15 @@ class L_assign(nn.Module):
         # Only consider valid units (k < K_l for each layer)
         valid_mask = ks < channel_counts_t.unsqueeze(1)  # [L, Kmax]
 
-        # Calculate final loss as per equation (5)
-        total_loss = 0.0
-        for l in range(L):
-            K_l = self.channel_counts[l]
-            layer_selectivity = (s_k[l, :K_l] * valid_mask[l, :K_l]).sum()
-            total_loss += layer_selectivity / K_l
+        # VECTORIZED final loss calculation
+        # Apply valid mask and compute weighted average per layer
+        s_k_masked = s_k * valid_mask  # Zero out invalid channels
+        layer_sums = s_k_masked.sum(dim=1)  # [L] - Sum per layer
+        layer_weights = channel_counts_t.float()  # [L] - K_l for each layer
+        
+        total_selectivity = (layer_sums / layer_weights).mean()  # Average over layers
 
-        L_assign = -self.lambda_ * (total_loss / L)  # Average over layers
+        L_assign = -self.lambda_ * total_selectivity
 
         return L_assign
 
@@ -270,7 +261,7 @@ class ResponseCompute(nn.Module):
             C = A.shape[1]
             B, _, H, W = A.shape
             
-            # CORRECTED: Ensure consistent flattening order
+            # VECTORIZED: Ensure consistent flattening order
             flat_depths = depths.reshape(-1)  # (B*H*W,)
             flat_A = A.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, C)
             
@@ -278,13 +269,28 @@ class ResponseCompute(nn.Module):
             bin_idx = torch.bucketize(flat_depths, edges, right=True) - 1
             bin_idx = torch.clamp(bin_idx, 0, self.D - 1)
 
-            # Calculate average response for each channel in each depth bin
-            for c in range(C):
-                for d in range(self.D):
-                    mask = (bin_idx == d)
-                    if mask.sum() > 0:
-                        R[layer_idx, c, d] = flat_A[mask, c].mean()
-                    else:
-                        R[layer_idx, c, d] = 0.0
+            # VECTORIZED: Calculate average response for each channel in each depth bin
+            # Use scatter_add for efficient binning
+            summed_responses = torch.zeros(C, self.D, device=self.device, dtype=flat_A.dtype)
+            counts = torch.zeros(self.D, device=self.device, dtype=torch.long)
+            
+            # Count pixels in each bin
+            counts = torch.bincount(bin_idx, minlength=self.D)
+            
+            # Sum responses for each channel and bin
+            bin_idx_expanded = bin_idx.unsqueeze(1).expand(-1, C)  # (B*H*W, C)
+            summed_responses.scatter_add_(
+                1, 
+                bin_idx_expanded.t(),  # (C, B*H*W)
+                flat_A.t()  # (C, B*H*W)
+            )
+            
+            # Calculate averages (avoid division by zero)
+            counts_safe = counts.clamp(min=1)
+            R[layer_idx, :C, :] = summed_responses / counts_safe.unsqueeze(0)
+            
+            # Zero out bins with no pixels
+            mask = (counts == 0)
+            R[layer_idx, :C, mask] = 0.0
 
         return R
