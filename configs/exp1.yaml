@@ -10,7 +10,8 @@ training:
   selectivity: false
   lambda: 10 # selecitivty factor, about 1% of max depth
   n_of_bins: 64 # bins for selectivity
-
+  fmaps_decoder: True
+  
 data:
   root: "data/nyu_data/data"
   split_files_folder: "./data_splits"
