@@ -39,7 +39,7 @@ docker run -u XXXX:XXXX \
 To run an evaluation you must run the `evaluate.py` script as follows:
 
 ```sh
-uv run evaluate.py --exp-list exp1,exp3,exp10,exp11
+uv run evaluate.py --exp-list exp1,exp15,exp16,exp17,exp18
 ```
 
 Or, if using docker:
@@ -52,7 +52,7 @@ docker run -u XXXX:XXXX \
     -e HOME=/workspace \
     -v $(pwd):/workspace \
     ghcr.io/astral-sh/uv:debian \
-    uv run evaluate.py --exp-list exp1,exp3,exp10,exp11
+    uv run evaluate.py --exp-list exp1,exp15,exp16,exp17,exp18
 ```
 
 By specifying the experiment name, the script will automatically pick the best checkpoint (in terms of validation loss)
