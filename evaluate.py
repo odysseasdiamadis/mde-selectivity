@@ -119,18 +119,11 @@ def compute_selectivity(
     k_idx = torch.arange(Kmax, device=device).unsqueeze(0).expand(L, Kmax)
     R_max = R.abs()[l_idx, k_idx, d_star]  # |R_{l,k,d*}| shape [L,Kmax]
 
-    # 3) Sum of abs over all bins: sum_d |R_{l,k,d}|
     R_sum_abs = R.abs().sum(dim=2)  # shape [L,Kmax]
-
-    # 4) Compute average of the “other” bins:
-    #    (sum_abs - R_max) / (D-1)
     R_rest_avg = (R_sum_abs - R_max) / (D - 1 + eps)
 
-    # 5) Selectivity index s = (R_max - R_rest_avg) / (R_max + R_rest_avg + eps)
     S = (R_max - R_rest_avg) / (R_max + R_rest_avg + eps)
 
-    # 6) Zero out invalid units (k >= K_l)
-    #    Build mask [L,Kmax] where True for k < K_l
     kc = torch.tensor(channel_counts, device=device)
     valid = k_idx < kc.unsqueeze(1)  # shape [L,Kmax]
     S = S * valid.float()
@@ -178,7 +171,7 @@ def evaluate(model: nn.Module, dataloader, criterion, device):
     return metrics, fmaps  # type: ignore
 
 
-def build_eval_df(exp_name, dataloader, model, device, dtype, include_config=False):
+def build_eval_df(exp_name, dataloader, model, device, dtype, include_config=True):
     config = load_config(f"configs/{exp_name}.yaml")
     checkpoint_path = os.path.join(
         "experiments", exp_name, "checkpoints", "best_model.pth"
@@ -239,7 +232,7 @@ def main():
 
     df = pd.DataFrame.from_dict(evals)
 
-    df.to_csv(f"./metrics_experiments.csv", float_format="{:,.4f}".format)
+    df.to_csv(f"./metrics_experiments.csv", float_format='%.2f')
 
 
 if __name__ == "__main__":
