@@ -378,4 +378,4 @@ class build_METER_model(nn.Module):
         x, fmaps_dec = self.decoder(x, enc_layer)
         if self.fmap_decoder:
             fmaps += fmaps_dec
-        return x, fmaps
+        return x, fmaps[:9]
